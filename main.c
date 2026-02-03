@@ -15,8 +15,21 @@ typedef struct {
     float *grad_wrt_input;
 } Layer;
 
-double sigmoid(double x) {
+typedef struct {
+    Layer *layers;
+    int num_layers;
+} Network;
+
+float sigmoid(float x) {
     return 1.0 / (1.0 + exp(-x));
+}
+
+float BCE(float y, float t) {
+    if (t <= 0 || t >= 1) {
+        // Avoid log(0) or log(1) issues; clit for numerical stability
+        t = (t <= 0) ? 1e-7 : (t >= 1) ? 1 - 1e-7 : t;
+    }
+    return - (y * log(t) + (1 - y) * log(1 - t));
 }
 
 void forward(Layer* layer, float* inputs) {
@@ -59,17 +72,31 @@ void init_layer(Layer *l, int in, int out) {
     }
 }
 
+float* loss(float* outputs, float* targets) {
+    int length = sizeof(&outputs) / sizeof(outputs[0]);
+    float *losses = malloc(sizeof(float) * length);
+    for (int i = 0; i < 4; i++) {
+        losses[i] = BCE(outputs[i], targets[i]);
+        printf("%f\n", losses[i]);
+    }
+    return losses;
+}
+
 int main() {
     float inputs[4][2] = {{0,0}, {0,1}, {1,0}, {1,1}};
     float targets[4][1] = {{0}, {1}, {1}, {0}};
     srand(time(NULL));
     // layer initialization
-    Layer layer = {0};
-    Layer *lp = &layer;
-    int input_dimetion = 2;
-    int output_dimention = 1;
-    init_layer(lp, input_dimetion, output_dimention);
-    forward(lp, *inputs);
-    printf("Prediction: %f\n", output_layer.activations[0]);
+    Layer layer1 = {0};
+    init_layer(&layer1, 2, 3);
+
+    Layer output_layer = {0};
+    init_layer(&output_layer, 3, 1);
+    
+    forward(&layer1, *inputs);
+    forward(&output_layer, layer1.activations);
+
+    float* losses = loss(output_layer.activations, *targets);
+
     return 0;
 }
