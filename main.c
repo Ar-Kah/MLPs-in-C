@@ -25,7 +25,7 @@ float sigmoid(float x) {
 }
 
 float sigmoid_derivative(float activation) {
-    return activation * (1 -activation);
+    return activation * (1.0f -activation);
 }
 
 float bce(float y, float t) {
@@ -166,6 +166,24 @@ Layer* create_network_layers(int num_layers) {
     return layers;
 }
 
+
+void update(Network *network, float learning_rate) {
+    for (int i = 0; i < network->num_layers; i++) {
+        Layer *layer = &network->layers[i];
+
+        for (int j = 0; j < layer->output_size; j++) {
+            // Update Bias
+            layer->biases[j] -= learning_rate * layer->grad_wrt_b[j];
+
+            for (int k = 0; k < layer->input_size; k++) {
+                int idx = k * layer->output_size + j;
+                // update weights
+                layer->weights[idx] -= learning_rate * layer->grad_wrt_w[idx];
+            }
+        }
+    }
+}
+
 int main() {
     float inputs[4][2] = {{0,0}, {0,1}, {1,0}, {1,1}};
     float targets[4][1] = {{0}, {1}, {1}, {0}};
@@ -173,17 +191,40 @@ int main() {
 
     int num_layers = 2;
     Layer* layers = create_network_layers(num_layers);
+    Network network = { .layers = layers, .num_layers = num_layers };
 
-    Network network = {
-    .layers = layers,
-    .num_layers = num_layers
-};
-    
-    forward(&network, *inputs);
+    float learning_rate = 0.1f;
+    int epochs = 20000;
 
-    // Calculate the losses using binary cross entropy
-    Layer output_layer = network.layers[network.num_layers-1];
-    float* losses = loss(output_layer, *targets);
+    for (int e = 0; e < epochs; e++) {
+        float epoch_loss = 0;
+
+        for (int i = 0; i < 4; i++) {
+            // 1. Forward pass with ONE of the four inputs
+            forward(&network, inputs[i]);
+
+            // 2. Track loss
+            epoch_loss += bce(targets[i][0], network.layers[1].activations[0]);
+
+            // 3. Backward pass
+            backward(&network, targets[i], inputs[i]);
+
+            // 4. Update
+            update(&network, learning_rate);
+        }
+
+        if (e % 2000 == 0) {
+            printf("Epoch %d | Avg Loss: %f\n", e, epoch_loss / 4.0f);
+        }
+    }
+
+    // Test it!
+    printf("\nFinal Predictions:\n");
+    for(int i = 0; i < 4; i++) {
+        forward(&network, inputs[i]);
+        printf("In: [%.0f, %.0f] Target: [%.0f] Pred: %f\n", 
+                inputs[i][0], inputs[i][1], targets[i][0], network.layers[1].activations[0]);
+    }
 
     return 0;
 }
