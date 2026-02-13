@@ -10,10 +10,10 @@ https://github.com/takafumihoriuchi/MNIST_for_C
 #include <string.h>
 
 // set appropriate path for data
-#define TRAIN_IMAGE "./data/MNIST/raw/train-images.idx3-ubyte"
-#define TRAIN_LABEL "./data/MNIST/raw/train-labels.idx1-ubyte"
-#define TEST_IMAGE "./data/MNIST/raw/10k-images.idx3-ubyte"
-#define TEST_LABEL "./data/MNIST/raw/t10k-labels.idx1-ubyte"
+#define TRAIN_IMAGE "/home/omakone3/Programming/C/MLP/data/train-images-idx3-ubyte"
+#define TRAIN_LABEL "/home/omakone3/Programming/C/MLP/data/train-labels-idx1-ubyte"
+#define TEST_IMAGE  "/home/omakone3/Programming/C/MLP/data/t10k-images-idx3-ubyte"
+#define TEST_LABEL  "/home/omakone3/Programming/C/MLP/data/t10k-labels-idx1-ubyte"
 
 #define SIZE 784 // 28*28
 #define NUM_TRAIN 60000
