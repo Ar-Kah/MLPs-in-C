@@ -11,13 +11,13 @@
 typedef struct {
     int input_size;
     int output_size;
-    float *weights;
-    float *biases;
-    float *preactivations;
-    float *activations;
-    float *grad_wrt_w;
-    float *grad_wrt_b;
-    float *grad_wrt_input;
+    double *weights;
+    double *biases;
+    double *preactivations;
+    double *activations;
+    double *grad_wrt_w;
+    double *grad_wrt_b;
+    double *grad_wrt_input;
 } Layer;
 
 typedef struct {
@@ -25,15 +25,43 @@ typedef struct {
     int num_layers;
 } Network;
 
-float sigmoid(float x) {
+double sigmoid(double x) {
     return 1.0 / (1.0 + exp(-x));
 }
 
-float sigmoid_derivative(float activation) {
+double sigmoid_derivative(double activation) {
     return activation * (1.0f -activation);
 }
 
-float bce(float y, float t) {
+// Implementation of softmax layer
+void apply_softmax(double* input, int size, double* output_dest) {
+    double max_val = input[0];
+    for(int i = 1; i < size; i++) if(input[i] > max_val) max_val = input[i];
+
+    double sum = 0.0;
+    for (int i = 0; i < size; i++) {
+        output_dest[i] = exp(input[i] - max_val); // Subtract max for stability
+        sum += output_dest[i];
+    }
+    for (int i = 0; i < size; i++) output_dest[i] /= sum;
+}
+// relu layer
+double *relu(double *outputs) {
+    int num_outputs = sizeof(&outputs) / sizeof(outputs[0]);
+    double* result = malloc(sizeof(double) * num_outputs);
+    for (int i = 0; i < num_outputs; i++) {
+        double numerator = outputs[i] + fabs(outputs[i]);
+        result[i] = numerator / 2;
+    }
+    return result;
+}
+
+
+// =====================
+// Loss functions      #
+// =====================
+
+double bce(double y, double t) {
     if (t <= 0 || t >= 1) {
         // Avoid log(0) or log(1) issues; clit for numerical stability
         t = (t <= 0) ? 1e-7 : (t >= 1) ? 1 - 1e-7 : t;
@@ -41,19 +69,29 @@ float bce(float y, float t) {
     return - (y * log(t) + (1 - y) * log(1 - t));
 }
 
+double sparce_categorical_cross_entropy(double *predictions, int label_index) {
+    // prediction is the array from softmax
+    // label_index is the actual number of 0-9
+    double p = predictions[label_index];
+
+    if (p < 1e-15) p = 1e-15;
+
+    return -log(p);
+}
+
 // The derivative of BCE Loss with respect to the Sigmoid activation
-float bce_derivative(float target, float prediction) {
+double bce_derivative(double target, double prediction) {
     // We add a tiny epsilon to prevent division by zero
-    float epsilon = 1e-7f;
+    double epsilon = 1e-7f;
     if (prediction < epsilon) prediction = epsilon;
     if (prediction > 1.0f - epsilon) prediction = 1.0f - epsilon;
 
     return (prediction - target) / (prediction * (1.0f - prediction));
 }
 
-void forward(Network *network, float* initial_inputs) {
+void forward(Network *network, double *initial_inputs) {
     
-    float* current_input = initial_inputs;
+    double *current_input = initial_inputs;
     // calculate the forward pass for all nodes in the network
     for (int x = 0; x < network->num_layers; x++) {
 
@@ -63,7 +101,7 @@ void forward(Network *network, float* initial_inputs) {
         for (int j = 0; j < layer->output_size; j++) {
 
             // calculate mlp forwardpass calculations
-            float sum = layer->biases[j];
+            double sum = layer->biases[j];
 
             for (int i = 0; i < layer->input_size; i++) {
                 sum += current_input[i] * layer->weights[i * layer->output_size + j];
@@ -77,7 +115,7 @@ void forward(Network *network, float* initial_inputs) {
     }
 }
 
-void backward(Network *network, float* targets, float* initial_inputs) {
+void backward(Network *network, int target, double* initial_inputs) {
     // 1. Reset all grad_wrt_input to 0 so we can accumulate sums
     for (int i = 0; i < network->num_layers; i++) {
         for (int j = 0; j < network->layers[i].input_size; j++) {
@@ -90,15 +128,21 @@ void backward(Network *network, float* targets, float* initial_inputs) {
         Layer *layer = &network->layers[i];
         
         // Determine what the inputs to THIS layer were
-        float *layer_inputs = (i == 0) ? initial_inputs : network->layers[i-1].activations;
+        double *layer_inputs = (i == 0) ? initial_inputs : network->layers[i-1].activations;
 
         for (int j = 0; j < layer->output_size; j++) {
-            float delta;
+            double delta;
 
             if (i == network->num_layers - 1) {
-                // OUTPUT LAYER: (Prediction - Target)
-                delta = layer->activations[j] - targets[j];
-            } else {
+                // Correct Softmax + Cross-Entropy gradient
+                double probs[10];
+                apply_softmax(layer->activations, layer->output_size, probs);
+
+                // Create one-hot target on the fly
+                double target_val = (j == target) ? 1.0 : 0.0;
+                delta = probs[j] - target_val; 
+            }
+            else {
                 // HIDDEN LAYER: (Error from layer above) * derivative
                 delta = layer->grad_wrt_input[j] * sigmoid_derivative(layer->activations[j]);
             }
@@ -127,20 +171,20 @@ void init_layer(Layer *l, int in, int out) {
     l->input_size = in; // input dimetion
     l->output_size = out; // output dimetion
 
-    l->weights = malloc(sizeof(float) * in * out);
-    l->biases = malloc(sizeof(float) * out);
+    l->weights = malloc(sizeof(double) * in * out);
+    l->biases = malloc(sizeof(double) * out);
 
-    l->preactivations = malloc(sizeof(float) * out);
-    l->activations = malloc(sizeof(float) * out);
+    l->preactivations = malloc(sizeof(double) * out);
+    l->activations = malloc(sizeof(double) * out);
 
-    l->grad_wrt_w = malloc(sizeof(float) * out *in);
-    l->grad_wrt_b = malloc(sizeof(float) * out);
-    l->grad_wrt_input = malloc(sizeof(float) * in);
+    l->grad_wrt_w = malloc(sizeof(double) * out *in);
+    l->grad_wrt_b = malloc(sizeof(double) * out);
+    l->grad_wrt_input = malloc(sizeof(double) * in);
 
     // randomly initialize the weights and biases
     for (int i = 0; i < in * out; i++) {
         // initialize values in the range of -1 to 1;
-        l->weights[i] = ((float) rand() / (float)RAND_MAX) * 2.0 - 1.0;
+        l->weights[i] = ((double) rand() / (double)RAND_MAX) * 2.0 - 1.0;
     }
 
     for (int i = 0; i < out; i++) {
@@ -149,8 +193,8 @@ void init_layer(Layer *l, int in, int out) {
 }
 
 // Inside loss()
-float* loss(Layer output_layer, float* targets) {
-    float *losses = malloc(sizeof(float) * output_layer.output_size);
+double* loss(Layer output_layer, double* targets) {
+    double *losses = malloc(sizeof(double) * output_layer.output_size);
     for (int i = 0; i < output_layer.output_size; i++) {
         losses[i] = bce(targets[i], output_layer.activations[i]);
         printf("Loss for output %d: %f (Pred: %f, Target: %f)\n", 
@@ -174,7 +218,7 @@ Network create_network_layers(int* layer_sizes, int num_layers) {
 }
 
 
-void update(Network *network, float learning_rate) {
+void update(Network *network, double learning_rate) {
     for (int i = 0; i < network->num_layers; i++) {
         Layer *layer = &network->layers[i];
 
@@ -203,8 +247,8 @@ int main() {
     // load mnist data
     load_mnist();
 
-    /* float inputs[4][2] = {{0,0}, {0,1}, {1,0}, {1,1}}; */
-    /* float targets[4][1] = {{0}, {1}, {1}, {0}}; */
+    /* double inputs[4][2] = {{0,0}, {0,1}, {1,0}, {1,1}}; */
+    /* double targets[4][1] = {{0}, {1}, {1}, {0}}; */
     /* int layer_sizes[] = {2, 3, 1}; */
 
 
@@ -215,38 +259,32 @@ int main() {
 
     Network network = create_network_layers(layer_sizes, num_layers);
 
-    float learning_rate = 0.1f;
-    int epochs = 20000;
+    double learning_rate = 0.1f;
+    int epochs = 20;
 
-    // training loop
+    int num_classes = layer_sizes[num_layers]; // get the number of classes from
+    Layer last_layer = network.layers[num_layers - 1]; // get the last layer
+
+    double* probs = malloc(sizeof(double) * num_classes);
+
     for (int e = 0; e < epochs; e++) {
-        float epoch_loss = 0;
+        double epoch_loss = 0;
+        // i < 4 is just for testing; MNIST train size is usually 60,000
+        for (int i = 0; i < 600; i++) { 
+            forward(&network, train_image[i]);
 
-        for (int i = 0; i < 4; i++) {
-            // 1. Forward pass with ONE of the four inputs
-            forward(&network, inputs[i]);
+            Layer *last_layer_ptr = &network.layers[num_layers - 1];
+            apply_softmax(last_layer_ptr->activations, num_classes, probs);
 
-            // 2. Track loss
-            epoch_loss += bce(targets[i][0], network.layers[1].activations[0]);
+            epoch_loss += sparce_categorical_cross_entropy(probs, train_label[i]);
 
-            // 3. Backward pass
-            backward(&network, targets[i], inputs[i]);
+            // Pass the target label (0-9)
+            backward(&network, train_label[i], train_image[i]);
 
-            // 4. Update
             update(&network, learning_rate);
         }
-
-        if (e % 2000 == 0) {
-            printf("Epoch %d | Avg Loss: %f\n", e, epoch_loss / 4.0f);
-        }
+        printf("Epoch %d | Avg Loss: %f\n", e, epoch_loss / 600.0f);
     }
-
-    printf("\nFinal Predictions:\n");
-    for(int i = 0; i < 4; i++) {
-        forward(&network, inputs[i]);
-        printf("In: [%.0f, %.0f] Target: [%.0f] Pred: %f\n", 
-                inputs[i][0], inputs[i][1], targets[i][0], network.layers[1].activations[0]);
-    }
-
+    free(probs);
     return 0;
 }
