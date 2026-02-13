@@ -218,13 +218,15 @@ int main() {
         }
     }
 
-    // Test it!
     printf("\nFinal Predictions:\n");
     for(int i = 0; i < 4; i++) {
         forward(&network, inputs[i]);
         printf("In: [%.0f, %.0f] Target: [%.0f] Pred: %f\n", 
                 inputs[i][0], inputs[i][1], targets[i][0], network.layers[1].activations[0]);
     }
+
+    // free layers even not mandatory
+    free(layers);
 
     return 0;
 }
