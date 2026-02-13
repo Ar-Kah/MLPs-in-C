@@ -3,6 +3,11 @@
 #include <stdlib.h>
 #include <math.h>
 
+#include "mnist.h"
+
+// define macro for getting the size of a list of integers
+#define LEN(x) (sizeof(x) / sizeof(x[0]))
+
 typedef struct {
     int input_size;
     int output_size;
@@ -154,16 +159,18 @@ float* loss(Layer output_layer, float* targets) {
     return losses;
 }
 
-Layer* create_network_layers(int num_layers) {
-    // Allocate memory for the layer structures themselves on the heap
+Network create_network_layers(int* layer_sizes, int num_layers) {
+
     Layer* layers = malloc(sizeof(Layer) * num_layers);
     
-    // Initialize Layer 0: 2 inputs -> 3 outputs
-    init_layer(&layers[0], 2, 3);
-    // Initialize Layer 1: 3 inputs -> 1 output
-    init_layer(&layers[1], 3, 1);
-    
-    return layers;
+    for (int i = 0; i < num_layers; i++) {
+        int in_size = layer_sizes[i];
+        int out_size = layer_sizes[i+1];
+        init_layer(&layers[i], in_size, out_size);
+    }
+
+    Network network = { .layers = layers, .num_layers = num_layers };
+    return network;
 }
 
 
@@ -184,18 +191,34 @@ void update(Network *network, float learning_rate) {
     }
 }
 
-int main() {
-    float inputs[4][2] = {{0,0}, {0,1}, {1,0}, {1,1}};
-    float targets[4][1] = {{0}, {1}, {1}, {0}};
-    srand(time(NULL));
 
-    int num_layers = 2;
-    Layer* layers = create_network_layers(num_layers);
-    Network network = { .layers = layers, .num_layers = num_layers };
+/*
+** This is my recreational/passion machine learning project in C
+**
+** Author: Aaro Karhu
+*/
+int main() {
+    srand(time(NULL)); // initialize random num generator
+
+    // load mnist data
+    load_mnist();
+
+    /* float inputs[4][2] = {{0,0}, {0,1}, {1,0}, {1,1}}; */
+    /* float targets[4][1] = {{0}, {1}, {1}, {0}}; */
+    /* int layer_sizes[] = {2, 3, 1}; */
+
+
+    // define the dense network for the mnist dataset
+    int layer_sizes[] = {784, 128, 64, 10}; // 784 input 10 output
+
+    int num_layers = LEN(layer_sizes) -1;
+
+    Network network = create_network_layers(layer_sizes, num_layers);
 
     float learning_rate = 0.1f;
     int epochs = 20000;
 
+    // training loop
     for (int e = 0; e < epochs; e++) {
         float epoch_loss = 0;
 
@@ -224,9 +247,6 @@ int main() {
         printf("In: [%.0f, %.0f] Target: [%.0f] Pred: %f\n", 
                 inputs[i][0], inputs[i][1], targets[i][0], network.layers[1].activations[0]);
     }
-
-    // free layers even not mandatory
-    free(layers);
 
     return 0;
 }
