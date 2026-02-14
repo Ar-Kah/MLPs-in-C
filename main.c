@@ -1,3 +1,4 @@
+#include <string.h>
 #include <stdio.h>
 #include <time.h>
 #include <stdlib.h>
@@ -46,13 +47,10 @@ void apply_softmax(double* input, int size, double* output_dest) {
     for (int i = 0; i < size; i++) output_dest[i] /= sum;
 }
 // relu layer
-double *relu(double *outputs) {
-    int num_outputs = sizeof(&outputs) / sizeof(outputs[0]);
-    double* result = malloc(sizeof(double) * num_outputs);
-    for (int i = 0; i < num_outputs; i++) {
-        double numerator = outputs[i] + fabs(outputs[i]);
-        result[i] = numerator / 2;
-    }
+double relu(double output) {
+    double result;
+    double numerator = output + fabs(output);
+    result = numerator / 2;
     return result;
 }
 
@@ -89,7 +87,7 @@ double bce_derivative(double target, double prediction) {
     return (prediction - target) / (prediction * (1.0f - prediction));
 }
 
-void forward(Network *network, double *initial_inputs) {
+void forward(Network *network, double *initial_inputs, char* activation) {
     
     double *current_input = initial_inputs;
     // calculate the forward pass for all nodes in the network
@@ -107,15 +105,20 @@ void forward(Network *network, double *initial_inputs) {
                 sum += current_input[i] * layer->weights[i * layer->output_size + j];
             }
 
-        // store claculations into activation and preactivation 
-        layer->preactivations[j] = sum;
-        layer->activations[j] = sigmoid(sum);
+            // store claculations into activation and preactivation
+            layer->preactivations[j] = sum;
+
+            if (strcmp(activation, "relu") == 0) {
+                layer->activations[j] = relu(sum);
+            } else {
+                layer->activations[j] = sigmoid(sum);
+            }
         }
     current_input = layer->activations;
     }
 }
 
-void backward(Network *network, int target, double* initial_inputs) {
+void backward(Network *network, int target, double* initial_inputs, char* actication) {
     // 1. Reset all grad_wrt_input to 0 so we can accumulate sums
     for (int i = 0; i < network->num_layers; i++) {
         for (int j = 0; j < network->layers[i].input_size; j++) {
@@ -133,9 +136,11 @@ void backward(Network *network, int target, double* initial_inputs) {
         for (int j = 0; j < layer->output_size; j++) {
             double delta;
 
+            // Edge case for the last layer in the network
+            // Gradinet is calculated wrt. loss function
             if (i == network->num_layers - 1) {
-                // Correct Softmax + Cross-Entropy gradient
-                double probs[10];
+                // Correct Softmax + Cross-Entropy gradient simplyfies to prob - target
+                double probs[10]; // hardcode target class amount
                 apply_softmax(layer->activations, layer->output_size, probs);
 
                 // Create one-hot target on the fly
@@ -144,8 +149,18 @@ void backward(Network *network, int target, double* initial_inputs) {
             }
             else {
                 // HIDDEN LAYER: (Error from layer above) * derivative
-                delta = layer->grad_wrt_input[j] * sigmoid_derivative(layer->activations[j]);
+                if (strcmp(actication, "sigmoid") == 0) {
+                    delta = layer->grad_wrt_input[j] * sigmoid_derivative(layer->activations[j]);
+                }
+                else {
+                    // derivative of relu activation
+                    double relu_derivative = (layer->activations[j] > 0) ? 1.0 : 0.0;
+                    delta = layer->grad_wrt_input[j] * relu_derivative;
+                }
             }
+
+            // skip further gradient calculations if delta is 0
+            if (delta == 0) continue;
 
             // Bias gradient is just the delta
             layer->grad_wrt_b[j] = delta;
@@ -165,6 +180,8 @@ void backward(Network *network, int target, double* initial_inputs) {
             }
         }
     }
+    // uncomment to check vanishing gradients
+    /* printf("%f\n", network->layers[network->num_layers -1].grad_wrt_w[0]); */
 }
 
 void init_layer(Layer *l, int in, int out) {
@@ -181,10 +198,13 @@ void init_layer(Layer *l, int in, int out) {
     l->grad_wrt_b = malloc(sizeof(double) * out);
     l->grad_wrt_input = malloc(sizeof(double) * in);
 
-    // randomly initialize the weights and biases
+    // Initialize weights using he initialization
+    // otherwise the gradients with relu will go
+    // straight to 0
+    double scale = sqrt(2.0 / in);
     for (int i = 0; i < in * out; i++) {
         // initialize values in the range of -1 to 1;
-        l->weights[i] = ((double) rand() / (double)RAND_MAX) * 2.0 - 1.0;
+        l->weights[i] = (((double) rand() / RAND_MAX) * 2.0 - 1.0) * scale;
     }
 
     for (int i = 0; i < out; i++) {
@@ -235,6 +255,20 @@ void update(Network *network, double learning_rate) {
     }
 }
 
+// Function the get the max value index after applying softmax in the network
+int get_max_value_index(double* list, int size) {
+    double max;
+    int idx;
+    for (int i = 0; i < size; i++) {
+        double value = list[i];
+        if (value > max) {
+            max = value;
+            idx = i;
+        }
+    }
+    return idx;
+}
+
 
 /*
 ** This is my recreational/passion machine learning project in C
@@ -259,7 +293,7 @@ int main() {
 
     Network network = create_network_layers(layer_sizes, num_layers);
 
-    double learning_rate = 0.1f;
+    double learning_rate = 0.001f;
     int epochs = 20;
 
     int num_classes = layer_sizes[num_layers]; // get the number of classes from
@@ -267,24 +301,34 @@ int main() {
 
     double* probs = malloc(sizeof(double) * num_classes);
 
+    char* activation = "relu";
+
+    // test training with 600 images and 20 epochs
     for (int e = 0; e < epochs; e++) {
+        double prediction_precent = 0;
+        int correct_predictions = 0;
         double epoch_loss = 0;
-        // i < 4 is just for testing; MNIST train size is usually 60,000
         for (int i = 0; i < 600; i++) { 
-            forward(&network, train_image[i]);
+            forward(&network, train_image[i], activation);
 
             Layer *last_layer_ptr = &network.layers[num_layers - 1];
             apply_softmax(last_layer_ptr->activations, num_classes, probs);
 
+            int prediction = get_max_value_index(probs, 10);
+            if (prediction == train_label[i]) ++correct_predictions;
+
             epoch_loss += sparce_categorical_cross_entropy(probs, train_label[i]);
 
             // Pass the target label (0-9)
-            backward(&network, train_label[i], train_image[i]);
+            backward(&network, train_label[i], train_image[i], activation);
 
             update(&network, learning_rate);
         }
-        printf("Epoch %d | Avg Loss: %f\n", e, epoch_loss / 600.0f);
+        prediction_precent = 100 - (double)correct_predictions / 600 * 100;
+        printf("Epoch %d | Avg Loss: %.4f | train error: %.2f% \n", e, epoch_loss / 600.0f, prediction_precent);
     }
+
     free(probs);
+
     return 0;
 }
