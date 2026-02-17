@@ -160,7 +160,7 @@ void backward(Network *network, int target, double* initial_inputs, char* actica
             }
 
             // skip further gradient calculations if delta is 0
-            if (delta == 0) continue;
+            /* if (delta == 0) continue; */
 
             // Bias gradient is just the delta
             layer->grad_wrt_b[j] = delta;
@@ -207,8 +207,10 @@ void init_layer(Layer *l, int in, int out) {
         l->weights[i] = (((double) rand() / RAND_MAX) * 2.0 - 1.0) * scale;
     }
 
+    // With relu activation a bigger bias moves the activation
+    // further from becoming 0
     for (int i = 0; i < out; i++) {
-        l->biases[i] = 0.01f;
+        l->biases[i] = 1.0f;
     }
 }
 
@@ -257,8 +259,8 @@ void update(Network *network, double learning_rate) {
 
 // Function the get the max value index after applying softmax in the network
 int get_max_value_index(double* list, int size) {
-    double max;
-    int idx;
+    double max = -1;
+    int idx = -1;
     for (int i = 0; i < size; i++) {
         double value = list[i];
         if (value > max) {
@@ -328,6 +330,24 @@ int main() {
         printf("Epoch %d | Avg Loss: %.4f | train error: %.2f% \n", e, epoch_loss / 600.0f, prediction_precent);
     }
 
+    int correct_predictions = 0;
+    // test on a little validation set
+    for (int j = 0; j < 30; j++) {
+
+        int test_idx = 700 + j;
+        forward(&network, train_image[test_idx], activation);
+
+        Layer *last_layer_ptr = &network.layers[num_layers - 1];
+        apply_softmax(last_layer_ptr->activations, num_classes, probs);
+
+        int prediction = get_max_value_index(probs, 10);
+
+        printf("prediction: %d. Real label: %d\n", prediction, train_label[test_idx]);
+        if (prediction == train_label[test_idx]) correct_predictions++;
+
+    }
+
+    printf("validation accuracy: %.4f\n", (double) correct_predictions / 30 * 100);
     free(probs);
 
     return 0;
