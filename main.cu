@@ -87,7 +87,24 @@ double bce_derivative(double target, double prediction) {
     return (prediction - target) / (prediction * (1.0f - prediction));
 }
 
-void forward(Network *network, double *initial_inputs, char* activation) {
+__global__ void forward_kernel(double *input, double *weights, double *biases,
+                          double *preactivation, double *activation, int input_size, int output_size) {
+    // determing threads to calculate each neuron
+    int j = blockIdx.x * blockDim.x + threadIdx.x;
+
+    // Only work if this thread is corresponding to a valid neuron
+    if (j < output_size) {
+        double sum = biases[j];
+
+        for (int i = 0; i < input_size; i++) {
+            sum += input[i] * weights[i * output_size + j];
+        }
+        preactivation[j] = sum; // store the preactivation for backward pass
+        activation[j] = sum > 0 ? sum : 0; // ReLU activation
+    }
+}
+
+void forward(Network *network, double *initial_inputs) {
     
     double *current_input = initial_inputs;
     // calculate the forward pass for all nodes in the network
@@ -96,25 +113,17 @@ void forward(Network *network, double *initial_inputs, char* activation) {
         // loop over layers in network
         Layer* layer = &network->layers[x];
 
-        for (int j = 0; j < layer->output_size; j++) {
+        // Launch a forward kernel for MLP calculations inside a layer
+        int threadsPerBlock = 256;
+        int blocksPerGrid = (layer->output_size + threadsPerBlock -1) / threadsPerBlock;
 
-            // calculate mlp forwardpass calculations
-            double sum = layer->biases[j];
+        forward_kernel <<<blocksPerGrid, threadsPerBlock>>>(current_input, layer->weights, layer->biases,
+                                                            layer->preactivations, layer->activations, layer->input_size, layer->output_size);
 
-            for (int i = 0; i < layer->input_size; i++) {
-                sum += current_input[i] * layer->weights[i * layer->output_size + j];
-            }
+        current_input = layer->activations;
 
-            // store claculations into activation and preactivation
-            layer->preactivations[j] = sum;
-
-            if (strcmp(activation, "relu") == 0) {
-                layer->activations[j] = relu(sum);
-            } else {
-                layer->activations[j] = sigmoid(sum);
-            }
-        }
-    current_input = layer->activations;
+        // Wait for the GPU to finish before moving to the next layer
+        cudaDeviceSynchronize();
     }
 }
 
@@ -184,39 +193,49 @@ void backward(Network *network, int target, double* initial_inputs, char* actica
     /* printf("%f\n", network->layers[network->num_layers -1].grad_wrt_w[0]); */
 }
 
+/**
+ * Function for initializing the the MLP layers on the GPU
+ */
 void init_layer(Layer *l, int in, int out) {
     l->input_size = in; // input dimetion
     l->output_size = out; // output dimetion
 
-    l->weights = malloc(sizeof(double) * in * out);
-    l->biases = malloc(sizeof(double) * out);
+    // Allocate memory using cudaMalloc
+    cudaMalloc((void**)&l->weights, sizeof(double) * in * out);
+    cudaMalloc((void**)&l->biases, sizeof(double) * out);
+    cudaMalloc((void**)&l->preactivations, sizeof(double) * out);
+    cudaMalloc((void**)&l->activations, sizeof(double) * out);
+    cudaMalloc((void**)&l->grad_wrt_w, sizeof(double) * out * in);
+    cudaMalloc((void**)&l->grad_wrt_b, sizeof(double) * out);
+    cudaMalloc((void**)&l->grad_wrt_input, sizeof(double) * in);
 
-    l->preactivations = malloc(sizeof(double) * out);
-    l->activations = malloc(sizeof(double) * out);
-
-    l->grad_wrt_w = malloc(sizeof(double) * out *in);
-    l->grad_wrt_b = malloc(sizeof(double) * out);
-    l->grad_wrt_input = malloc(sizeof(double) * in);
-
-    // Initialize weights using he initialization
-    // otherwise the gradients with relu will go
-    // straight to 0
+    // allocate temp weights to cpu
+    double *temp_weights = (double*)malloc(in * out * sizeof(double));
+    // Using HE initialization for ReLU activations
     double scale = sqrt(2.0 / in);
     for (int i = 0; i < in * out; i++) {
         // initialize values in the range of -1 to 1;
-        l->weights[i] = (((double) rand() / RAND_MAX) * 2.0 - 1.0) * scale;
+        temp_weights[i] = (((double) rand() / RAND_MAX) * 2.0 - 1.0) * scale;
     }
 
-    // With relu activation a bigger bias moves the activation
-    // further from becoming 0
+    double *temp_biases = (double*)malloc(out * sizeof(double));
     for (int i = 0; i < out; i++) {
-        l->biases[i] = 1.0f;
+        temp_biases[i] = 1.0f;
     }
+
+    // Copy the weights and biases from the cpu to the gpu
+    cudaMemcpy(l->weights, temp_weights, in * out * sizeof(double), cudaMemcpyHostToDevice);
+    cudaMemcpy(l->biases, temp_biases, out * sizeof(double), cudaMemcpyHostToDevice);
+    // free the temp weights from cpu ram
+    free(temp_weights);
+    free(temp_biases);
+
 }
 
 // Inside loss()
 double* loss(Layer output_layer, double* targets) {
-    double *losses = malloc(sizeof(double) * output_layer.output_size);
+    double *losses;
+    cudaMalloc((void**)&losses, sizeof(double) * output_layer.output_size);
     for (int i = 0; i < output_layer.output_size; i++) {
         losses[i] = bce(targets[i], output_layer.activations[i]);
         printf("Loss for output %d: %f (Pred: %f, Target: %f)\n", 
@@ -227,7 +246,7 @@ double* loss(Layer output_layer, double* targets) {
 
 Network create_network_layers(int* layer_sizes, int num_layers) {
 
-    Layer* layers = malloc(sizeof(Layer) * num_layers);
+    Layer* layers = (Layer*)malloc(sizeof(Layer) * num_layers);
     
     for (int i = 0; i < num_layers; i++) {
         int in_size = layer_sizes[i];
@@ -278,77 +297,53 @@ int get_max_value_index(double* list, int size) {
 ** Author: Aaro Karhu
 */
 int main() {
-    srand(time(NULL)); // initialize random num generator
+    srand(time(NULL));
+    init_mnist_buffers(); // Allocate the 1D arrays
 
-    // load mnist data
-    load_mnist();
+    // Load data
+    read_mnist_char(TRAIN_IMAGE, NUM_TRAIN, SIZE, train_image_char);
+    read_mnist_char(TEST_IMAGE, NUM_TEST, SIZE, test_image_char);
+    read_mnist_char(TRAIN_LABEL, NUM_TRAIN, 1, train_label_char);
+    read_mnist_char(TEST_LABEL, NUM_TEST, 1, test_label_char);
 
-    /* double inputs[4][2] = {{0,0}, {0,1}, {1,0}, {1,1}}; */
-    /* double targets[4][1] = {{0}, {1}, {1}, {0}}; */
-    /* int layer_sizes[] = {2, 3, 1}; */
+    // Convert to double
+    image_char2double(NUM_TRAIN, train_image_char, train_image);
+    image_char2double(NUM_TEST, test_image_char, test_image);
 
+    // NOW you can easily copy to GPU
+    double *d_train_image;
+    cudaMalloc(&d_train_image, NUM_TRAIN * SIZE * sizeof(double));
+    cudaMemcpy(d_train_image, train_image, NUM_TRAIN * SIZE * sizeof(double), cudaMemcpyHostToDevice);
 
-    // define the dense network for the mnist dataset
-    int layer_sizes[] = {784, 128, 64, 10}; // 784 input 10 output
-
-    int num_layers = LEN(layer_sizes) -1;
-
+    int layer_sizes[] = {784, 128, 64, 10};
+    int num_layers = LEN(layer_sizes) - 1;
     Network network = create_network_layers(layer_sizes, num_layers);
 
-    double learning_rate = 0.001f;
+    // FIX: Correct cudaMalloc usage
+    double *d_probs;
+    cudaMalloc((void**)&d_probs, sizeof(double) * 10);
+    
+    // Create a buffer on GPU for the input image
+    double *d_input;
+    cudaMalloc((void**)&d_input, sizeof(double) * 784);
+
     int epochs = 20;
 
-    int num_classes = layer_sizes[num_layers]; // get the number of classes from
-    Layer last_layer = network.layers[num_layers - 1]; // get the last layer
-
-    double* probs = malloc(sizeof(double) * num_classes);
-
-    char* activation = "relu";
-
-    // test training with 600 images and 20 epochs
     for (int e = 0; e < epochs; e++) {
-        double prediction_precent = 0;
-        int correct_predictions = 0;
-        double epoch_loss = 0;
-        for (int i = 0; i < 600; i++) { 
-            forward(&network, train_image[i], activation);
+        for (int i = 0; i < 60000; i++) {
+            // 1. COPY INPUT: Move current image to GPU
+            cudaMemcpy(d_input, train_image + (i * 784), sizeof(double) * 784, cudaMemcpyHostToDevice);
 
-            Layer *last_layer_ptr = &network.layers[num_layers - 1];
-            apply_softmax(last_layer_ptr->activations, num_classes, probs);
+            // 2. FORWARD: Pass the GPU buffer to your forward function
+            // (You will need to update your forward function to accept d_input)
+            forward(&network, d_input);
 
-            int prediction = get_max_value_index(probs, 10);
-            if (prediction == train_label[i]) ++correct_predictions;
-
-            epoch_loss += sparce_categorical_cross_entropy(probs, train_label[i]);
-
-            // Pass the target label (0-9)
-            backward(&network, train_label[i], train_image[i], activation);
-
-            update(&network, learning_rate);
+            // 3. BACKWARD/UPDATE: 
+            // Warning: These are currently CPU functions. To use them, you must 
+            // use cudaMemcpy to bring layer->activations back to the CPU first.
+            // ... (Your current code here will crash unless you bring data back)
+            
         }
-        prediction_precent = 100 - (double)correct_predictions / 600 * 100;
-        printf("Epoch %d | Avg Loss: %.4f | train error: %.2f% \n", e, epoch_loss / 600.0f, prediction_precent);
     }
-
-    int correct_predictions = 0;
-    // test on a little validation set
-    for (int j = 0; j < 30; j++) {
-
-        int test_idx = 700 + j;
-        forward(&network, train_image[test_idx], activation);
-
-        Layer *last_layer_ptr = &network.layers[num_layers - 1];
-        apply_softmax(last_layer_ptr->activations, num_classes, probs);
-
-        int prediction = get_max_value_index(probs, 10);
-
-        printf("prediction: %d. Real label: %d\n", prediction, train_label[test_idx]);
-        if (prediction == train_label[test_idx]) correct_predictions++;
-
-    }
-
-    printf("validation accuracy: %.4f\n", (double) correct_predictions / 30 * 100);
-    free(probs);
-
     return 0;
 }
