@@ -38,6 +38,8 @@ unsigned char *test_label_char;
 
 double *train_image;
 double *test_image;
+int *train_image_label;
+int *test_image_label;
 
 // Initialize memory buffers
 void init_mnist_buffers() {
@@ -65,5 +67,13 @@ void read_mnist_char(const char *file_path, int num_data, int arr_n, unsigned ch
 void image_char2double(int num_data, unsigned char *data_char, double *data_double) {
     for (int i = 0; i < num_data * SIZE; i++) {
         data_double[i] = (double)data_char[i] / 255.0;
+    }
+}
+
+// Convert raw byte labels to an integer array (0-9)
+void label_char2int(int num_data, unsigned char *data_char, int *label_int) {
+    for (int i = 0; i < num_data; i++) {
+        // Simple cast: binary byte -> integer
+        label_int[i] = (int)data_char[i];
     }
 }
