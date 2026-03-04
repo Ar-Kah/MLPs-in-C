@@ -116,37 +116,46 @@ __global__ void forward_kernel(double *input, double *weights, double *biases,
     }
 }
 
-__global__ void zero_gradients(double *gradients_wtr_biases, double* gradients_wtr_weights, double *gradients_wtr_inputs, int num_nodes) {
+__global__ void zero_layer_gradients(double *grad_b, double *grad_in, int num_nodes) {
     int j = blockIdx.x * blockDim.x + threadIdx.x;
 
     if (j < num_nodes) {
-        gradients_wtr_biases[j] = 0;
-        gradients_wtr_inputs[j] = 0;
-        gradients_wtr_weights[j] = 0;
+        grad_b[j] = 0;
+        grad_in[j] = 0;
     }
 }
 
-__global__ void backward_kernel_output_layer(Layer* output_layer, Layer* previous_layer, int target, double *probs) {
+// Dedicated Kernel for Weight Gradients (Size: input_size * output_size)
+__global__ void zero_weight_gradients(double *grad_w, int total_weights) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < total_weights) {
+        grad_w[idx] = 0.0;
+    }
+}
+
+__global__ void backward_kernel_output_layer(
+    double* grad_wrt_b, 
+    double* grad_wrt_w, 
+    double* previous_grad_wrt_input,
+    double* previous_activations,
+    double* weights,
+    int input_size, 
+    int output_size, 
+    int target, 
+    double *probs) 
+{
     int j = blockIdx.x * blockDim.x + threadIdx.x;
-
-    double delta = 0;
-    if (j < output_layer->output_size) {
-        // Softmax + Cross-Entropy gradient simplyfies to prob - target
+    if (j < output_size) {
         double target_val = (j == target) ? 1.0 : 0.0;
-        delta = probs[j] - target_val;
+        double delta = probs[j] - target_val;
 
-        output_layer->grad_wrt_b[j] = delta;
+        grad_wrt_b[j] = delta;
 
-        // WEIGHT GRADIENTS: Loop over every input that fed into this neuron
-        for (int k = 0; k < output_layer->input_size; k++) {
-            int weight_idx = k * output_layer->output_size + j;
-
-            // Weight gradient = delta * input
-            output_layer->grad_wrt_w[weight_idx] = delta * previous_layer->activations[k];
-
-            // PASS ERROR BACK: Update the input gradient for the PREVIOUS layer
-            // We sum these up because one input node affects multiple output nodes
-            previous_layer->grad_wrt_input[k] += delta * output_layer->weights[weight_idx];
+        for (int k = 0; k < input_size; k++) {
+            int weight_idx = k * output_size + j;
+            grad_wrt_w[weight_idx] = delta * previous_activations[k];
+            // Use atomicAdd to prevent race conditions from multiple 'j' threads
+            atomicAdd(&previous_grad_wrt_input[k], delta * weights[weight_idx]);
         }
     }
 }
@@ -170,7 +179,7 @@ __global__ void backward_kernel(Layer* layer, Layer* previous_layer, double* ini
 
             // Gradient is delta * activation of the previous layer
             double *prev_act = (current_layer_idx == 0) ? initial_inputs : previous_layer->activations;
-            layer->grad_wrt_w[weight_idx] = delta * *prev_act;
+            layer->grad_wrt_w[weight_idx] = delta * prev_act[k];
 
             // Pass error back to the previous layer
             if (current_layer_idx != 0) {
@@ -206,56 +215,52 @@ void forward(Network *network, double *initial_inputs) {
     }
 }
 
-
-void backward(Network *network, int target, double* initial_inputs) {
-    // 1. Reset all grad_wrt_input to 0 so we can accumulate sums
+void backward(Network *network, int target, double* initial_inputs, double *probs) {
     int threadsPerBlock = 256;
 
+    // 1. Zero all gradients first (Crucial for atomicAdd)
     for (int i = 0; i < network->num_layers; i++) {
-
-        Layer *layer = &network->layers[i];
-
-        int blocksPerGrid = (layer->output_size + threadsPerBlock -1) / threadsPerBlock;
-        zero_gradients<<<blocksPerGrid, threadsPerBlock>>>(layer->grad_wrt_b,
-                                                           layer->grad_wrt_input,
-                                                           layer->grad_wrt_w,
-                                                           layer->output_size);
-
-        // Wait for the device to sync to prosede with the loop
-        cudaDeviceSynchronize();
+        Layer *l = &network->layers[i];
+        int b_zero = (l->output_size + threadsPerBlock - 1) / threadsPerBlock;
+        int w_zero = (l->input_size * l->output_size + threadsPerBlock - 1) / threadsPerBlock;
+        
+        zero_layer_gradients<<<b_zero, threadsPerBlock>>>(l->grad_wrt_b, l->grad_wrt_input, l->output_size);
+        zero_weight_gradients<<<w_zero, threadsPerBlock>>>(l->grad_wrt_w, l->input_size * l->output_size);
     }
-    // Calculate the softmax for output layer backward kernel
-    double probs[10];
-    int blocks = 1;
-    int threads = 1;
-    int num_classes = 10;
-    softmax_kernel<<<blocks, threads>>>(network->layers[network->num_layers].activations, num_classes, probs);
-
     cudaDeviceSynchronize();
+
+    // 2. Output Layer
+    Layer* out_l = &network->layers[network->num_layers - 1];
+    Layer* prev_l = &network->layers[network->num_layers - 2];
     
-    /* Pass the prob calculated above to the output layers backward kernel */
-    /* Reason for this that the compiler would not let me have a global function call another global function */
+    for (int i = 0; i < 10; i++) {
+        // zero probs
+        probs[i] = 0;
+    }
+    int blocks = (out_l->output_size + threadsPerBlock - 1) / threadsPerBlock;
+    int num_classes = 10;
+    softmax_kernel<<<blocks, threadsPerBlock>>>(network->layers[network->num_layers-1].activations, num_classes, probs);
 
-    // 2. Calculate the gradients of output layer
-    int blocksPerGrid = (network->layers[network->num_layers].output_size + threadsPerBlock -1) / threadsPerBlock;
-    backward_kernel_output_layer<<<blocksPerGrid, threadsPerBlock>>>(&network->layers[network->num_layers], &network->layers[network->num_layers], target, probs);
+    backward_kernel_output_layer<<<blocks, threadsPerBlock>>>(
+        out_l->grad_wrt_b, out_l->grad_wrt_w, prev_l->grad_wrt_input, 
+        prev_l->activations, out_l->weights, 
+        out_l->input_size, out_l->output_size, target, probs
+    );
 
-    cudaDeviceSynchronize();
-
-    // 3. Loop backwards through layers
-    for (int i = network->num_layers - 1; i >= 0; i--) {
+    // 3. Hidden Layers (Loop from pen-ultimate layer down to 0)
+    for (int i = network->num_layers - 2; i >= 0; i--) {
         Layer *layer = &network->layers[i];
-        Layer *previous_layer = &network->layers[i - 1];
+        Layer *previous_layer = (i > 0) ? &network->layers[i - 1] : NULL;
         
         // Launch backward Kernel Jalla Jalla
-        blocksPerGrid = (layer->output_size + threadsPerBlock -1) / threadsPerBlock;
-        backward_kernel<<<blocksPerGrid, threadsPerBlock>>>(layer, previous_layer, initial_inputs, i);
+        blocks = (layer->output_size + threadsPerBlock -1) / threadsPerBlock;
+        backward_kernel<<<blocks, threadsPerBlock>>>(layer, previous_layer, initial_inputs, i);
 
         cudaDeviceSynchronize();
     }
-    // uncomment to check vanishing gradients
-    /* printf("%f\n", network->layers[network->num_layers -1].grad_wrt_w[0]); */
 }
+ 
+
 
 /**
  * Function for initializing the the MLP layers on the GPU
@@ -299,7 +304,8 @@ void init_layer(Layer *l, int in, int out) {
 
 Network create_network_layers(int* layer_sizes, int num_layers) {
 
-    Layer* layers = (Layer*)malloc(sizeof(Layer) * num_layers);
+    Layer* layers;
+    cudaMallocManaged((void**)&layers, num_layers * sizeof(Layer));
     
     for (int i = 0; i < num_layers; i++) {
         int in_size = layer_sizes[i];
@@ -317,23 +323,32 @@ Network create_network_layers(int* layer_sizes, int num_layers) {
     return network;
 }
 
-
-void update(Network *network, double learning_rate) {
-    for (int i = 0; i < network->num_layers; i++) {
-        Layer *layer = &network->layers[i];
-
-        for (int j = 0; j < layer->output_size; j++) {
-            // Update Bias
-            layer->biases[j] -= learning_rate * layer->grad_wrt_b[j];
-
-            for (int k = 0; k < layer->input_size; k++) {
-                int idx = k * layer->output_size + j;
-                // update weights
-                layer->weights[idx] -= learning_rate * layer->grad_wrt_w[idx];
-            }
+__global__ void update_kernel(double* weights, double* biases, double* grad_w, double* grad_b, 
+                             int in_size, int out_size, double learning_rate) {
+    int j = blockDim.x * blockIdx.x + threadIdx.x;
+    if (j < out_size) {
+        biases[j] -= learning_rate * grad_b[j];
+        for (int i = 0; i < in_size; i++) {
+            int idx = i * out_size + j;
+            weights[idx] -= learning_rate * grad_w[idx];
         }
     }
 }
+
+void update(Network *network, double learning_rate) {
+    int threadsPerBlock = 256;
+    for (int i = 0; i < network->num_layers; i++) {
+        Layer *l = &network->layers[i];
+        int blocks = (l->output_size + threadsPerBlock - 1) / threadsPerBlock;
+
+        update_kernel<<<blocks, threadsPerBlock>>>(
+            l->weights, l->biases, l->grad_wrt_w, l->grad_wrt_b, 
+            l->input_size, l->output_size, learning_rate
+        );
+    }
+    cudaDeviceSynchronize(); 
+}
+
 
 // Function the get the max value index after applying softmax in the network
 int get_max_value_index(double* list, int size) {
@@ -376,7 +391,7 @@ int main() {
     // NOW you can easily copy to GPU
     printf("Allocating memory for the gpu for images\n");
     double *d_train_image;
-    cudaMalloc(&d_train_image, NUM_TRAIN * SIZE * sizeof(double));
+    cudaMalloc((void**)&d_train_image, NUM_TRAIN * SIZE * sizeof(double));
     cudaMemcpy(d_train_image, train_image, NUM_TRAIN * SIZE * sizeof(double), cudaMemcpyHostToDevice);
 
     printf("Initializing network\n");
@@ -397,16 +412,17 @@ int main() {
     double *d_target;
     cudaMalloc((void**)&d_target, sizeof(double));
     int epochs = 20;
+    double learning_rate = 0.01;
 
     printf("Started training\n");
     for (int e = 0; e < epochs; e++) {
+
+        double prediction_precent = 0;
         int correct_predictions = 0;
         double epoch_loss = 0.0;
 
-        printf("epoch: %d\n", e+1);
-        fflush(stdout); // Force print statement
-
-        for (int i = 0; i < 60000; i++) {
+        int N = 60000;
+        for (int i = 0; i < N; i++) {
             // 1. COPY INPUT: Move current image data to GPU
             cudaMemcpy(d_input, train_image + (i * 784), sizeof(double) * 784, cudaMemcpyHostToDevice);
             cudaMemcpy(d_target, train_image_label + i, sizeof(int), cudaMemcpyHostToDevice);
@@ -415,20 +431,26 @@ int main() {
             forward(&network, d_input);
 
             // 3. SOFTMAX: Calculate the softmax in the GPU
-            double *output_layer_activations_ptr = network.layers[network.num_layers].activations;
+            double *output_layer_activations_ptr = network.layers[network.num_layers -1].activations;
             softmax_kernel<<<1, 1>>>(output_layer_activations_ptr, num_classes, dh_probs);
 
-            // wait for the GPU then prosede
             cudaDeviceSynchronize();
+
             int prediction = get_max_value_index(dh_probs, num_classes);
-            if (prediction == *train_image_label) correct_predictions++;
+            if (prediction == train_image_label[i]) correct_predictions++;
+            // printf("%d %d\n", prediction, train_image_label[i]);
             
             // 4. LOSS: Calculate the loss of the network
-            epoch_loss += sparce_categorical_cross_entropy(dh_probs, *train_image_label);
+            epoch_loss += sparce_categorical_cross_entropy(dh_probs, train_image_label[i]);
 
             // 5. BACKWARD: Zero gradients and calculate gradients
-            backward(&network, *train_image_label, d_input);
+            backward(&network, train_image_label[i], d_input, dh_probs);
+
+            // 6. UPDATE PARAMETERS
+            update(&network, learning_rate);
         }
+        prediction_precent = 100 - (double)correct_predictions / N * 100;
+        printf("Epoch %d | Avg Loss: %.4f | train error: %.2f% \n", e+1, epoch_loss / N, prediction_precent);
     }
 
 
@@ -442,10 +464,9 @@ int main() {
         cudaFree(network.layers[i].grad_wrt_b);
         cudaFree(network.layers[i].grad_wrt_w);
         cudaFree(network.layers[i].grad_wrt_input);
-        
     }
 
-    free(network.layers);
+    cudaFree(network.layers); // Use cudaFree for Managed memory!
 
     cudaFree(d_input);
     cudaFree(dh_probs);
