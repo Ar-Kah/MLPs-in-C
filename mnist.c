@@ -11,7 +11,6 @@ Aaro Karhu 2026
 #include <stdlib.h>
 #include <unistd.h>
 #include <fcntl.h>
-#include <string.h>
 
 // set appropriate path for data
 #define TRAIN_IMAGE "/home/omakone3/Programming/C/MLP/data/train-images-idx3-ubyte"
@@ -50,6 +49,8 @@ void init_mnist_buffers() {
     
     train_image = (double *)malloc(NUM_TRAIN * SIZE * sizeof(double));
     test_image = (double *)malloc(NUM_TEST * SIZE * sizeof(double));
+    train_image_label = (int*)malloc(NUM_TRAIN * SIZE * sizeof(int));
+    test_image_label = (int*)malloc(NUM_TEST * SIZE* sizeof(int));
 }
 
 // Flat reader function
@@ -74,6 +75,6 @@ void image_char2double(int num_data, unsigned char *data_char, double *data_doub
 void label_char2int(int num_data, unsigned char *data_char, int *label_int) {
     for (int i = 0; i < num_data; i++) {
         // Simple cast: binary byte -> integer
-        label_int[i] = (int)data_char[i];
+        label_int[i] = (int)data_char[i] / 255.0;
     }
 }
