@@ -75,6 +75,6 @@ void image_char2double(int num_data, unsigned char *data_char, double *data_doub
 void label_char2int(int num_data, unsigned char *data_char, int *label_int) {
     for (int i = 0; i < num_data; i++) {
         // Simple cast: binary byte -> integer
-        label_int[i] = (int)data_char[i] / 255.0;
+        label_int[i] = (int)data_char[i];
     }
 }
