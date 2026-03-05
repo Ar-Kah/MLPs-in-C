@@ -21,7 +21,7 @@ The network is configured to process the **MNIST dataset**, consisting of 60,000
 
 ### 1. Parallel Forward Pass
 Each neuron's activation is calculated in parallel across GPU threads. The pre-activation sum is stored to facilitate the backward pass:
-$$\z_j = \text{bias}_j + \sum_{i=0}^{n} (\text{input}_i \cdot \text{weight}_{ij})$$
+$$z_j = \text{bias}_j + \sum_{i=0}^{n} (\text{input}_i \cdot \text{weight}_{ij})$$
 
 ### 2. Loss & Optimization
 * **Activation**: ReLU for hidden layers; Softmax for the output layer.
