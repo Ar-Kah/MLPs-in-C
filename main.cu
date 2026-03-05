@@ -26,48 +26,6 @@ typedef struct {
     int num_layers;
 } Network;
 
-double sigmoid(double x) {
-    return 1.0 / (1.0 + exp(-x));
-}
-
-double sigmoid_derivative(double activation) {
-    return activation * (1.0f -activation);
-}
-
-// Implementation of softmax layer
-__global__ void softmax_kernel(double* input, int size, double* output_dest) {
-
-    double max_val = input[0];
-    for(int i = 1; i < size; i++) if(input[i] > max_val) max_val = input[i];
-
-    double sum = 0.0;
-    for (int i = 0; i < size; i++) {
-        output_dest[i] = exp(input[i] - max_val); // Subtract max for stability
-        sum += output_dest[i];
-    }
-    for (int i = 0; i < size; i++) output_dest[i] /= sum;
-}
-
-// relu layer
-double relu(double output) {
-    double result;
-    double numerator = output + fabs(output);
-    result = numerator / 2;
-    return result;
-}
-
-
-// =====================
-// Loss functions      #
-// =====================
-
-double binary_cross_entropy(double y, double t) {
-    if (t <= 0 || t >= 1) {
-        // Avoid log(0) or log(1) issues; clit for numerical stability
-        t = (t <= 0) ? 1e-7 : (t >= 1) ? 1 - 1e-7 : t;
-    }
-    return - (y * log(t) + (1 - y) * log(1 - t));
-}
 
 /* After taking the highest index after applying softmax
  * all but one index is 0 so we only calculate the loss
@@ -92,44 +50,62 @@ double bce_derivative(double target, double prediction) {
     return (prediction - target) / (prediction * (1.0f - prediction));
 }
 
+
+// Implementation of softmax layer
+__global__ void softmax_kernel(double* input, int size, double* output_dest) {
+
+    double max_val = input[0];
+    for(int i = 1; i < size; i++) if(input[i] > max_val) max_val = input[i];
+
+    double sum = 0.0;
+    for (int i = 0; i < size; i++) {
+        output_dest[i] = exp(input[i] - max_val); // Subtract max for stability
+        sum += output_dest[i];
+    }
+    for (int i = 0; i < size; i++) output_dest[i] /= sum;
+}
+
+
+/* Forward pass kernel for a layer */
 __global__ void forward_kernel(double *input, double *weights, double *biases,
                           double *preactivation, double *activation, int input_size, int output_size) {
     // determing threads to calculate each neuron
-    int j = blockIdx.x * blockDim.x + threadIdx.x;
+    int neuron_idx = blockIdx.x * blockDim.x + threadIdx.x;
 
     // Only work if this thread is corresponding to a valid neuron
-    if (j < output_size) {
-        double sum = biases[j];
+    if (neuron_idx < output_size) {
+        double sum = biases[neuron_idx];
 
         for (int i = 0; i < input_size; i++) {
-            sum += input[i] * weights[i * output_size + j];
+            sum += input[i] * weights[i * output_size + neuron_idx];
         }
-        preactivation[j] = sum; // store the preactivation for backward pass
+        preactivation[neuron_idx] = sum; // store the preactivation for backward pass
 
         // skip relu at the output layer
         if (output_size == 10) {
-            activation[j] = preactivation[j];
+            activation[neuron_idx] = preactivation[neuron_idx];
         }
         else {
-            activation[j] = sum > 0 ? sum : 0; // ReLU activation
+            activation[neuron_idx] = sum > 0 ? sum : 0; // ReLU activation
         }
     }
 }
 
+/* Zero gradients  */
 __global__ void zero_layer_gradients(double *grad_b, double *grad_in, int num_nodes) {
-    int j = blockIdx.x * blockDim.x + threadIdx.x;
+    int output_dim_idx = blockIdx.x * blockDim.x + threadIdx.x;
 
-    if (j < num_nodes) {
-        grad_b[j] = 0;
-        grad_in[j] = 0;
+    if (output_dim_idx < num_nodes) {
+        grad_b[output_dim_idx] = 0;
+        grad_in[output_dim_idx] = 0;
     }
 }
 
 // Dedicated Kernel for Weight Gradients (Size: input_size * output_size)
 __global__ void zero_weight_gradients(double *grad_w, int total_weights) {
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx < total_weights) {
-        grad_w[idx] = 0.0;
+    int weight_idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (weight_idx < total_weights) {
+        grad_w[weight_idx] = 0.0;
     }
 }
 
@@ -162,29 +138,45 @@ __global__ void backward_kernel_output_layer(
 
 __global__ void backward_kernel(Layer* layer, Layer* previous_layer, double* initial_inputs, int current_layer_idx) {
     
-    int j = blockIdx.x * blockDim.x + threadIdx.x;
+    int neuron_idx = blockIdx.x * blockDim.x + threadIdx.x;
 
-    if (j < layer->output_size) {
+    if (neuron_idx < layer->output_size) {
         double delta = 0;
 
-        double relu_derivation = layer->activations[j] == 0 ? 0.0 : 1.0; // If relu is not 0 then gradient is 1
-        delta = layer->grad_wrt_input[j] * relu_derivation;
+        double relu_derivation = layer->activations[neuron_idx] == 0 ? 0.0 : 1.0; // If relu is not 0 then gradient is 1
+        delta = layer->grad_wrt_input[neuron_idx] * relu_derivation;
 
-        layer->grad_wrt_b[j] = delta;
+        layer->grad_wrt_b[neuron_idx] = delta;
 
-        for ( int k = 0; k < layer->input_size; k++ ) {
+        for ( int input_size_idx = 0; input_size_idx < layer->input_size; input_size_idx++ ) {
             // weights are [input_size * output_size]
             // Accessing weights for input j and neuron j:
-            int weight_idx = k * layer->output_size + j;
+            int weight_idx = input_size_idx * layer->output_size + neuron_idx;
 
             // Gradient is delta * activation of the previous layer
             double *prev_act = (current_layer_idx == 0) ? initial_inputs : previous_layer->activations;
-            layer->grad_wrt_w[weight_idx] = delta * prev_act[k];
+            layer->grad_wrt_w[weight_idx] = delta * prev_act[input_size_idx];
 
             // Pass error back to the previous layer
             if (current_layer_idx != 0) {
-                previous_layer->grad_wrt_input[k] += delta * layer->weights[weight_idx];
+                previous_layer->grad_wrt_input[input_size_idx] += delta * layer->weights[weight_idx];
             }
+        }
+    }
+}
+
+__global__ void update_kernel(double* weights, double* biases, double* grad_w, double* grad_b, 
+                             int in_size, int out_size, double learning_rate) {
+    int neuron_idx = blockDim.x * blockIdx.x + threadIdx.x;
+
+    if (neuron_idx < out_size) {
+        biases[neuron_idx] -= learning_rate * grad_b[neuron_idx];
+
+        for (int input_size_idx = 0; input_size_idx < in_size; input_size_idx++) {
+
+            // Calculate the index of the weight input_idx * output_size + neuron_index
+            int weight_idx = input_size_idx * out_size + neuron_idx;
+            weights[weight_idx] -= learning_rate * grad_w[weight_idx];
         }
     }
 }
@@ -218,7 +210,7 @@ void forward(Network *network, double *initial_inputs) {
 void backward(Network *network, int target, double* initial_inputs, double *probs) {
     int threadsPerBlock = 256;
 
-    // 1. Zero all gradients first (Crucial for atomicAdd)
+    // 1. Zero all gradients first
     for (int i = 0; i < network->num_layers; i++) {
         Layer *l = &network->layers[i];
         int b_zero = (l->output_size + threadsPerBlock - 1) / threadsPerBlock;
@@ -260,7 +252,6 @@ void backward(Network *network, int target, double* initial_inputs, double *prob
     }
 }
  
-
 
 /**
  * Function for initializing the the MLP layers on the GPU
@@ -314,25 +305,11 @@ Network create_network_layers(int* layer_sizes, int num_layers) {
     }
 
     Network network = {
-
-    .layers = layers,
-    .num_layers = num_layers
-
+        .layers = layers,
+        .num_layers = num_layers
     };
 
     return network;
-}
-
-__global__ void update_kernel(double* weights, double* biases, double* grad_w, double* grad_b, 
-                             int in_size, int out_size, double learning_rate) {
-    int j = blockDim.x * blockIdx.x + threadIdx.x;
-    if (j < out_size) {
-        biases[j] -= learning_rate * grad_b[j];
-        for (int i = 0; i < in_size; i++) {
-            int idx = i * out_size + j;
-            weights[idx] -= learning_rate * grad_w[idx];
-        }
-    }
 }
 
 void update(Network *network, double learning_rate) {
@@ -371,7 +348,9 @@ int get_max_value_index(double* list, int size) {
 ** Author: Aaro Karhu
 */
 int main() {
+
     srand(time(NULL));
+
     init_mnist_buffers(); // Allocate the 1D arrays
 
     // Load data
