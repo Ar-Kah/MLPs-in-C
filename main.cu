@@ -86,9 +86,11 @@ __global__ void forward_kernel2d(double *input, double *weights, double *biases,
                             double *preactivation, double *activation, int input_size,
                             int output_size, int batch_size)
 {
+    // Map threads to asoecific Neuron x and a specific image y
     int neuron_idx = blockIdx.x * blockDim.x + threadIdx.x;
     int batch_idx = blockDim.y * blockIdx.y + threadIdx.y;
     
+    // Check bounds
     if ( neuron_idx < output_size && neuron_idx< batch_size ) {
 
         double sum = biases[neuron_idx];
@@ -99,6 +101,17 @@ __global__ void forward_kernel2d(double *input, double *weights, double *biases,
             int weight_idx = i * output_size + neuron_idx;
 
             sum += input[input_idx] * weights[weight_idx];
+        }
+
+        int out_ptr = (batch_idx * output_size) + neuron_idx;
+        preactivation[out_ptr] = sum;
+
+        // skip relu at the output layer
+        if (output_size == 10) {
+            activation[out_ptr] = preactivation[out_ptr];
+        }
+        else {
+            activation[out_ptr] = sum > 0 ? sum : 0; // ReLU activation
         }
     }
 }
@@ -256,7 +269,7 @@ void forward(Network *network, double *initial_inputs, int batch_size) {
         );
 
         // Launch kernel for forward pass
-        forward_kernel <<<blocksPerGrid, threadsPerBlock>>>(current_input, layer->weights, layer->biases,
+        forward_kernel2d <<<blocksPerGrid, threadsPerBlock>>>(current_input, layer->weights, layer->biases,
                                                             layer->preactivations, layer->activations,
                                                             layer->input_size, layer->output_size, batch_size);
 
