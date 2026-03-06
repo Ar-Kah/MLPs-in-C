@@ -1,3 +1,4 @@
+#include <__clang_cuda_builtin_vars.h>
 #include <string.h>
 #include <stdio.h>
 #include <time.h>
@@ -51,24 +52,63 @@ double bce_derivative(double target, double prediction) {
 }
 
 
-// Implementation of softmax layer
-__global__ void softmax_kernel(double* input, int size, double* output_dest) {
+/* Softmax with minibatch */
+__global__ void softmax_kernel(double* input, int size, double* output_probs, int batch_size) {
 
-    double max_val = input[0];
-    for(int i = 1; i < size; i++) if(input[i] > max_val) max_val = input[i];
+    // Take the index of the image in the batch
+    int image_idx = blockDim.x * blockIdx.x + threadIdx.x;
 
-    double sum = 0.0;
-    for (int i = 0; i < size; i++) {
-        output_dest[i] = exp(input[i] - max_val); // Subtract max for stability
-        sum += output_dest[i];
+    if (image_idx < batch_size) {
+        // take the stating place of the 1D array
+        int starting_idx = image_idx * size;
+
+        // Initialize the max value as the first index
+        double max_val = input[starting_idx];
+        // Find the max value
+        for(int i = 1; i < size; i++) if(input[starting_idx + i] > max_val) max_val = input[starting_idx + i];
+
+        // Calculate the sum of exponents in softmax
+        double sum = 0.0;
+        for (int i = 0; i < size; i++) {
+            output_probs[starting_idx + i] = exp(input[starting_idx + i] - max_val); // Subtract max for stability
+            sum += output_probs[starting_idx + i];
+        }
+
+        // Calculate the individial probabilities for output
+        for (int i = 0; i < size; i++) output_probs[starting_idx + i] /= sum;
     }
-    for (int i = 0; i < size; i++) output_dest[i] /= sum;
+}
+
+/**
+ * 2D forward pass for minibatches
+ */
+__global__ void forward_kernel2d(double *input, double *weights, double *biases,
+                            double *preactivation, double *activation, int input_size,
+                            int output_size, int batch_size)
+{
+    int neuron_idx = blockIdx.x * blockDim.x + threadIdx.x;
+    int batch_idx = blockDim.y * blockIdx.y + threadIdx.y;
+    
+    if ( neuron_idx < output_size && neuron_idx< batch_size ) {
+
+        double sum = biases[neuron_idx];
+
+        for ( int i = 0; i < input_size; i++ ) {
+            int input_idx = batch_idx * input_size + i;
+
+            int weight_idx = i * output_size + neuron_idx;
+
+            sum += input[input_idx] * weights[weight_idx];
+        }
+    }
 }
 
 
 /* Forward pass kernel for a layer */
 __global__ void forward_kernel(double *input, double *weights, double *biases,
-                          double *preactivation, double *activation, int input_size, int output_size) {
+                            double *preactivation, double *activation,
+                            int input_size, int output_size) {
+
     // determing threads to calculate each neuron
     int neuron_idx = blockIdx.x * blockDim.x + threadIdx.x;
 
@@ -199,9 +239,9 @@ __global__ void update_kernel(double* weights, double* biases, double* grad_w, d
     }
 }
 
-void forward(Network *network, double *initial_inputs) {
+void forward(Network *network, double *initial_inputs, int batch_size) {
 
-    int threadsPerBlock = 256;
+    dim3 threadsPerBlock(16, 16);
     
     double *current_input = initial_inputs;
     // calculate the forward pass for all nodes in the network
@@ -210,12 +250,15 @@ void forward(Network *network, double *initial_inputs) {
         // loop over layers in network
         Layer* layer = &network->layers[x];
 
-        int blocksPerGrid = (layer->output_size + threadsPerBlock -1) / threadsPerBlock;
+        dim3 blocksPerGrid(
+            (layer->output_size + threadsPerBlock.x -1) / threadsPerBlock.x,
+            (batch_size + threadsPerBlock.y -1) / threadsPerBlock.y
+        );
 
         // Launch kernel for forward pass
         forward_kernel <<<blocksPerGrid, threadsPerBlock>>>(current_input, layer->weights, layer->biases,
                                                             layer->preactivations, layer->activations,
-                                                            layer->input_size, layer->output_size);
+                                                            layer->input_size, layer->output_size, batch_size);
 
         // change the intput to the next layer
         current_input = layer->activations;
@@ -386,6 +429,9 @@ int main() {
     cudaMalloc((void**)&d_train_image, NUM_TRAIN * SIZE * sizeof(double));
     cudaMemcpy(d_train_image, train_image, NUM_TRAIN * SIZE * sizeof(double), cudaMemcpyHostToDevice);
 
+    // Initialize the batch size
+    int batch_size = 64;
+
     printf("Initializing network\n");
     int layer_sizes[] = {784, 128, 64, 10};
     int num_layers = LEN(layer_sizes) - 1;
@@ -394,16 +440,16 @@ int main() {
 
     // Allocate probability array (array after softmax) for the host and device
     double *dh_probs;
-    cudaMallocManaged((void**)&dh_probs, sizeof(double) * num_classes);
+    cudaMallocManaged((void**)&dh_probs, sizeof(double) * num_classes * batch_size);
     
     // allocate memory on the device (GPU) for inputs
     double *d_input;
-    cudaMalloc((void**)&d_input, sizeof(double) * 784);
+    cudaMalloc((void**)&d_input, sizeof(double) * 784 * batch_size);
 
     // allocate memory on the device for target valeus
     double *d_target;
-    cudaMalloc((void**)&d_target, sizeof(double));
-    int epochs = 20;
+    cudaMalloc((void**)&d_target, sizeof(double) * batch_size);
+    int epochs = 5;
     double learning_rate = 0.01;
 
     printf("Started training\n");
@@ -413,18 +459,21 @@ int main() {
         int correct_predictions = 0;
         double epoch_loss = 0.0;
 
+
         int N = 60000;
-        for (int i = 0; i < N; i++) {
+        for (int i = 0; i < N; i += batch_size) {
             // 1. COPY INPUT: Move current image data to GPU
-            cudaMemcpy(d_input, train_image + (i * 784), sizeof(double) * 784, cudaMemcpyHostToDevice);
-            cudaMemcpy(d_target, train_image_label + i, sizeof(int), cudaMemcpyHostToDevice);
+            cudaMemcpy(d_input, train_image + (i * 784), sizeof(double) * 784 * batch_size, cudaMemcpyHostToDevice);
+            cudaMemcpy(d_target, train_image_label + i, sizeof(int) * batch_size, cudaMemcpyHostToDevice);
 
             // 2. FORWARD: Pass the GPU buffer to your forward function
-            forward(&network, d_input);
+            forward(&network, d_input, batch_size);
 
+            int threadsPerBlock = 256;
+            int blocksPerGrid = (batch_size + threadsPerBlock -1) / threadsPerBlock;
             // 3. SOFTMAX: Calculate the softmax in the GPU
             double *output_layer_activations_ptr = network.layers[network.num_layers -1].activations;
-            softmax_kernel<<<1, 1>>>(output_layer_activations_ptr, num_classes, dh_probs);
+            softmax_kernel<<<blocksPerGrid, threadsPerBlock>>>(output_layer_activations_ptr, num_classes, dh_probs, batch_size);
 
             cudaDeviceSynchronize();
 
