@@ -136,6 +136,24 @@ __global__ void backward_kernel_output_layer(
     }
 }
 
+__global__ void backward_kernel2D(Layer *layer, Layer *previous_layer, double *initial_input, int current_layer_idx)
+{
+    int output_node_idx = blockIdx.x * blockDim.x + threadIdx.x;
+    int input_node_idx = blockIdx.y * blockDim.y + threadIdx.y;
+
+    if (output_node_idx < layer->output_size && input_node_idx < layer->input_size) {
+        float delta = 0.0f;
+
+        // One row update bias
+        // if (output_node_idx == 0) {
+        //     layer->grad_wrt_b 
+        // }
+
+        int weight_idx = (input_node_idx * layer->output_size) + output_node_idx;
+        layer->grad_wrt_w[weight_idx] += delta * layer->weights[weight_idx];
+    }
+}
+
 __global__ void backward_kernel(Layer* layer, Layer* previous_layer, double* initial_inputs, int current_layer_idx) {
     
     int neuron_idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -225,13 +243,8 @@ void backward(Network *network, int target, double* initial_inputs, double *prob
     Layer* out_l = &network->layers[network->num_layers - 1];
     Layer* prev_l = &network->layers[network->num_layers - 2];
     
-    for (int i = 0; i < 10; i++) {
-        // zero probs
-        probs[i] = 0;
-    }
     int blocks = (out_l->output_size + threadsPerBlock - 1) / threadsPerBlock;
     int num_classes = 10;
-    softmax_kernel<<<blocks, threadsPerBlock>>>(network->layers[network->num_layers-1].activations, num_classes, probs);
 
     backward_kernel_output_layer<<<blocks, threadsPerBlock>>>(
         out_l->grad_wrt_b, out_l->grad_wrt_w, prev_l->grad_wrt_input, 
@@ -246,7 +259,7 @@ void backward(Network *network, int target, double* initial_inputs, double *prob
         
         // Launch backward Kernel Jalla Jalla
         blocks = (layer->output_size + threadsPerBlock -1) / threadsPerBlock;
-        backward_kernel<<<blocks, threadsPerBlock>>>(layer, previous_layer, initial_inputs, i);
+        backward_kernel <<<blocks, threadsPerBlock>>> (layer, previous_layer, initial_inputs, i);
 
         cudaDeviceSynchronize();
     }
