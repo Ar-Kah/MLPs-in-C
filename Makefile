@@ -4,7 +4,9 @@
 # @file
 # @version 0.1
 
-main: main.c
-	gcc main.c -o main -lm && ./main
+main: main.cu
+	nvcc main.cu -o mlp
 
+run: mlp
+	./mlp
 # end
