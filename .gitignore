@@ -7,3 +7,5 @@ a.out
 ./mlp
 /mlp
 /bin/
+/.cache/
+/compile_commands.json
