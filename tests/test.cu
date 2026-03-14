@@ -1,7 +1,21 @@
 #include <time.h>
 
 #include "kernels.cuh"
-#include "mnist.c"
+#include "mnist.h"
+
+
+
+typedef struct {
+    int input_size;
+    int output_size;
+    double *weights;
+    double *biases;
+    double *preactivations;
+    double *activations;
+    double *grad_wrt_w;
+    double *grad_wrt_b;
+    double *grad_wrt_input;
+} Layer;
 
 typedef struct {
     Layer *layers;

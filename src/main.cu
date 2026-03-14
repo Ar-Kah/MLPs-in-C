@@ -10,6 +10,19 @@
 // define macro for getting the size of a list of integers
 #define LEN(x) (sizeof(x) / sizeof(x[0]))
 
+
+typedef struct {
+    int input_size;
+    int output_size;
+    double *weights;
+    double *biases;
+    double *preactivations;
+    double *activations;
+    double *grad_wrt_w;
+    double *grad_wrt_b;
+    double *grad_wrt_input;
+} Layer;
+
 typedef struct {
     Layer *layers;
     int num_layers;

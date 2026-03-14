@@ -4,18 +4,6 @@
 // Include cuda_runtime to ensure __global__ and other types are recognized
 #include <cuda_runtime.h>
 
-typedef struct {
-    int input_size;
-    int output_size;
-    double *weights;
-    double *biases;
-    double *preactivations;
-    double *activations;
-    double *grad_wrt_w;
-    double *grad_wrt_b;
-    double *grad_wrt_input;
-} Layer;
-
 // Function prototypes must end with a semicolon!
 __global__ void softmax_kernel(double* input, int size, double* output, int stride);
 
