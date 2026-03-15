@@ -1,19 +1,25 @@
 #include "kernels.cuh"
 
+#include <stdio.h>
+
 /* Softmax with minibatch */
-__global__ void softmax_kernel(double* input, int size, double* output_probs, int batch_size) {
+__global__ void safe_softmax_kernel(double* input, int size, double* output_probs, int batch_size) {
 
     // Take the index of the image in the batch
-    int image_idx = blockDim.x * blockIdx.x + threadIdx.x;
+    int batch_idx = blockDim.x * blockIdx.x + threadIdx.x;
 
-    if (image_idx < batch_size) {
+    if (batch_idx < batch_size) {
         // take the stating place of the 1D array
-        int starting_idx = image_idx * size;
+        int starting_idx = batch_idx * size;
 
         // Initialize the max value as the first index
         double max_val = input[starting_idx];
         // Find the max value
-        for(int i = 1; i < size; i++) if(input[starting_idx + i] > max_val) max_val = input[starting_idx + i];
+        for(int i = 1; i < size; i++) {
+            if(input[starting_idx + i] > max_val) {
+                max_val = input[starting_idx + i];
+            }
+        }
 
         // Calculate the sum of exponents in softmax
         double sum = 0.0;
@@ -23,7 +29,11 @@ __global__ void softmax_kernel(double* input, int size, double* output_probs, in
         }
 
         // Calculate the individial probabilities for output
-        for (int i = 0; i < size; i++) output_probs[starting_idx + i] /= sum;
+        for (int i = 0; i < size; i++){
+            output_probs[starting_idx + i] /= sum;
+        } 
+        // for checking values for debugging
+        // printf("%.4f\n", output_probs[starting_idx]);
     }
 }
 
@@ -39,7 +49,7 @@ __global__ void forward_kernel2d(double *input, double *weights, double *biases,
     int batch_idx = blockDim.y * blockIdx.y + threadIdx.y;
     
     // Check bounds
-    if ( neuron_idx < output_size && neuron_idx< batch_size ) {
+    if ( neuron_idx < output_size && batch_idx < batch_size ) {
 
         double sum = biases[neuron_idx];
 
@@ -54,6 +64,9 @@ __global__ void forward_kernel2d(double *input, double *weights, double *biases,
         int out_ptr = (batch_idx * output_size) + neuron_idx;
         preactivation[out_ptr] = sum;
 
+        // debugging
+        // printf("Neuron number %d in batch number %d preactivation %f\n", neuron_idx+1, batch_idx+1,
+               // preactivation[out_ptr]);
         // skip relu at the output layer
         if (output_size == 10) {
             activation[out_ptr] = preactivation[out_ptr];

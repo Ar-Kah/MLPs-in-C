@@ -4,19 +4,6 @@
 #include "mnist.h"
 
 
-
-typedef struct {
-    int input_size;
-    int output_size;
-    double *weights;
-    double *biases;
-    double *preactivations;
-    double *activations;
-    double *grad_wrt_w;
-    double *grad_wrt_b;
-    double *grad_wrt_input;
-} Layer;
-
 typedef struct {
     Layer *layers;
     int num_layers;
@@ -139,7 +126,7 @@ int main() {
 
     printf("Initializing network\n");
     int layer_sizes[] = {784, 128, 64, 10};
-    int num_layers = sizeof(layer_sizes) / sizeof(layer_sizes[0]);
+    int num_layers = 3;
     int num_classes = 10;
     Network network = create_network_layers(layer_sizes, num_layers);
 
@@ -152,8 +139,8 @@ int main() {
     cudaMalloc((void**)&d_input, sizeof(double) * 784 * batch_size);
 
     // allocate memory on the device for target valeus
-    double *d_target;
-    cudaMalloc((void**)&d_target, sizeof(double) * batch_size);
+    int *d_target;
+    cudaMalloc((void**)&d_target, sizeof(int) * batch_size);
     int epochs = 10;
     double learning_rate = 0.01;
 
@@ -178,16 +165,12 @@ int main() {
             int blocksPerGrid = (batch_size + threadsPerBlock -1) / threadsPerBlock;
             // 3. SOFTMAX: Calculate the softmax in the GPU
             double *output_layer_activations_ptr = network.layers[network.num_layers -1].activations;
-            softmax_kernel<<<blocksPerGrid, threadsPerBlock>>>(output_layer_activations_ptr, num_classes, dh_probs, batch_size);
-
+            safe_softmax_kernel<<<blocksPerGrid, threadsPerBlock>>>(output_layer_activations_ptr,
+                                                               num_classes, dh_probs, batch_size);
             cudaDeviceSynchronize();
+
         }
-        prediction_precent = 100 - (double)correct_predictions / N * 100;
-        printf("Epoch %d | Avg Loss: %.4f | train error: %.2f% \n", e+1, epoch_loss / N, prediction_precent);
     }
-
-
-    // Free all of host and device memory
 
     for (int i = 0; i < network.num_layers; i++) {
         cudaFree(network.layers[i].activations);
