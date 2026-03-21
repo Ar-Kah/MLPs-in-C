@@ -263,7 +263,7 @@ int main() {
             int blocksPerGrid = (batch_size + threadsPerBlock - 1) / threadsPerBlock;
             // 3. SOFTMAX: Calculate the softmax in the GPU
             double *output_layer_activations_ptr = network.layers[network.num_layers -1].activations;
-            softmax_kernel<<<blocksPerGrid, threadsPerBlock>>>(output_layer_activations_ptr, num_classes, dh_probs, batch_size);
+            safe_softmax_kernel<<<blocksPerGrid, threadsPerBlock>>>(output_layer_activations_ptr, num_classes, dh_probs, batch_size);
 
             cudaDeviceSynchronize();
 
