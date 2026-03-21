@@ -4,3 +4,5 @@ main
 program
 a.out
 /compile_commands.json
+./mlp
+/mlp
