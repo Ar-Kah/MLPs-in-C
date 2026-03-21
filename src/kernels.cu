@@ -1,6 +1,5 @@
 #include "kernels.cuh"
 
-#include <stdio.h>
 
 /* Softmax with minibatch */
 __global__ void safe_softmax_kernel(double* input, int size, double* output_probs, int batch_size) {
@@ -147,7 +146,7 @@ __global__ void backward_kernel_output_layer2d(
   int neuron_idx = blockIdx.x * blockDim.x + threadIdx.x;
   int batch_idx = blockIdx.y * blockDim.y + threadIdx.y;
 
-  if (neuron_idx < output_size && batch_idx < input_size) {
+  if (neuron_idx < output_size && batch_idx < batch_size) {
 
     int probs_idx = batch_idx * output_size + neuron_idx;
     // Calculate derivative for the softmax index (probs_idx)
@@ -155,7 +154,7 @@ __global__ void backward_kernel_output_layer2d(
     double target_val = (neuron_idx == target[batch_idx]) ? 1.0 : 0.0;
     double delta = probs[probs_idx] - target_val;
 
-    atomicAdd(grad_wtr_b, delta);
+    atomicAdd(&grad_wtr_b[neuron_idx], delta);
 
     for (int i = 0; i < input_size; i++) {
       int weight_idx = i * output_size + neuron_idx;
@@ -196,20 +195,43 @@ __global__ void backward_kernel2d(Layer *layer, Layer *previous_layer,
                                   double *initial_input, int current_layer_idx,
                                   int batch_size)
 {
-    /* Kernel for the backward pass with mini batches */
     int neuron_idx = blockIdx.x * blockDim.x + threadIdx.x;
     int batch_idx = blockIdx.y * blockDim.y + threadIdx.y;
 
     if (neuron_idx < layer->output_size && batch_idx < batch_size) {
-        double relu_derivation = layer->activations[batch_idx] = 0 ? 0.0 : 1.0;
-        double delta = layer->grad_wrt_input[neuron_idx] * delta;
+        double relu_derivation = layer->activations[batch_idx * layer->output_size + neuron_idx] > 0 ? 1.0 : 0.0;
+        double delta = layer->grad_wrt_input[batch_idx * layer->output_size + neuron_idx] * relu_derivation;
 
-        atomicAdd(layer->grad_wrt_b, delta);
+        atomicAdd(&layer->grad_wrt_b[neuron_idx], delta);
 
         for ( int i = 0; i < layer->input_size; i++ ) {
             int weight_idx = (i * layer->output_size) + neuron_idx;
             int prev_act_idx = (batch_idx * layer->input_size) + i;
+
+            double prev_act = (current_layer_idx == 0) ? initial_input[prev_act_idx] : previous_layer->activations[prev_act_idx];
+
+            atomicAdd(&layer->grad_wrt_w[weight_idx], delta * prev_act);
+            
+            // FIXED: Only pass error backward if we aren't at the input layer
+                atomicAdd(&previous_layer->grad_wrt_input[prev_act_idx], delta * layer->weights[weight_idx]);
         }
+    }
+}
+
+__global__ void sparce_categorical_cross_entropy_kernel(double* probabilities, int* target_labels,
+                                                 int batch_size, int num_classes, double *loss) {
+    int batch_idx = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (batch_idx < batch_size) {
+        int target = target_labels[batch_idx];
+
+        int target_idx_probs = (batch_idx * num_classes) + target;
+
+        double p = probabilities[target_idx_probs];
+
+        if (p < 1e-15) p = 1e-15;
+        
+        atomicAdd(loss, -log(p));
     }
 }
 

@@ -3,6 +3,18 @@
 
 // Include cuda_runtime to ensure __global__ and other types are recognized
 #include <cuda_runtime.h>
+#include <math.h>
+#include <stdio.h>
+
+#define CUDA_CHECK_ERR(ans) { gpuAssert((ans), __FILE__, __LINE__); }
+inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort=true)
+{
+   if (code != cudaSuccess) 
+   {
+      fprintf(stderr,"GPUassert: %s %s %d\n", cudaGetErrorString(code), file, line);
+      if (abort) exit(code);
+   }
+}
 
 typedef struct {
     int input_size;
@@ -48,6 +60,9 @@ __global__ void backward_kernel_output_layer(
 __global__ void backward_kernel2d(Layer *layer, Layer *previous_layer,
                                   double *initial_input, int current_layer_idx,
                                   int batch_size);
+
+__global__ void sparce_categorical_cross_entropy_kernel(double* probabilities, int* target_labels,
+                                                 int batch_size, int num_classes, double* loss);
 
 __global__ void backward_kernel(Layer *layer, Layer *previous_layer,
                                 double *initial_inputs, int current_layer_idx);
