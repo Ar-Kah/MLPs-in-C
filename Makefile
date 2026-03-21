@@ -23,7 +23,7 @@ run: $(BIN_DIR)/mlp
 # Compile and run the tests
 test: $(TEST_DIR)/test.cu $(SRC_DIR)/kernels.cu $(SRC_DIR)/mnist.c
 	@mkdir -p $(BIN_DIR)
-	$(NVCC) $(CFLAGS)-w -G $^ -o $(BIN_DIR)/run_test
+	$(NVCC) $(CFLAGS)-w $^ -o $(BIN_DIR)/run_test
 	./$(BIN_DIR)/run_test
 
 # Clean up compiled files
