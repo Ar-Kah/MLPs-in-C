@@ -6,30 +6,8 @@ https://github.com/takafumihoriuchi/MNIST_for_C
 Convert Takafumis verion to work with cuda
 Aaro Karhu 2026
 */
+#include "mnist.h"
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <unistd.h>
-#include <fcntl.h>
-
-// set appropriate path for data
-#define TRAIN_IMAGE "/home/omakone3/Programming/C/MLP/data/train-images-idx3-ubyte"
-#define TRAIN_LABEL "/home/omakone3/Programming/C/MLP/data/train-labels-idx1-ubyte"
-#define TEST_IMAGE  "/home/omakone3/Programming/C/MLP/data/t10k-images-idx3-ubyte"
-#define TEST_LABEL  "/home/omakone3/Programming/C/MLP/data/t10k-labels-idx1-ubyte"
-
-#define SIZE 784 // 28*28
-#define NUM_TRAIN 60000
-#define NUM_TEST 10000
-#define LEN_INFO_IMAGE 4
-#define LEN_INFO_LABEL 2
-
-#define MAX_IMAGESIZE 1280
-#define MAX_BRIGHTNESS 255
-#define MAX_FILENAME 256
-#define MAX_NUM_OF_IMAGES 1
-
-// We use 1D pointers for everything. This allows us to use cudaMalloc/Memcpy directly.
 unsigned char *train_image_char;
 unsigned char *test_image_char;
 unsigned char *train_label_char;
