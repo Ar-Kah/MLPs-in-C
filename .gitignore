@@ -3,3 +3,4 @@ main
 ./program
 program
 a.out
+/compile_commands.json
