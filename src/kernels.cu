@@ -213,7 +213,9 @@ __global__ void backward_kernel2d(Layer *layer, Layer *previous_layer,
             atomicAdd(&layer->grad_wrt_w[weight_idx], delta * prev_act);
             
             // FIXED: Only pass error backward if we aren't at the input layer
+            if (current_layer_idx != 0) {
                 atomicAdd(&previous_layer->grad_wrt_input[prev_act_idx], delta * layer->weights[weight_idx]);
+            }
         }
     }
 }
@@ -260,6 +262,26 @@ __global__ void backward_kernel(Layer* layer, Layer* previous_layer, double* ini
             if (current_layer_idx != 0) {
                 previous_layer->grad_wrt_input[input_size_idx] += delta * layer->weights[weight_idx];
             }
+        }
+    }
+}
+
+__global__ void update_kernel_minibatch(double* weights, double* biases, double* grad_w,
+                                        double* grad_b, int input_size, int out_size,
+                                        double learning_rate, int batch_size)
+{
+    int neuron_idx = blockDim.x * blockIdx.x + threadIdx.x;
+
+    if (neuron_idx < out_size) {
+        // Update parematers with gradients and nromalize them with the batch size
+        biases[neuron_idx] -= learning_rate * (grad_b[neuron_idx] / batch_size);
+
+        for (int input_size_idx = 0; input_size_idx < input_size; input_size_idx++) {
+
+            // Calculate the index of the weight input_idx * output_size + neuron_index
+            int weight_idx = input_size_idx * out_size + neuron_idx;
+            // Update weights and normalize with the batch size
+            weights[weight_idx] -= learning_rate * (grad_w[weight_idx] / batch_size);
         }
     }
 }
