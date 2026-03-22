@@ -34,8 +34,8 @@ extern unsigned char *test_image_char;
 extern unsigned char *train_label_char;
 extern unsigned char *test_label_char;
 
-extern double *train_image;
-extern double *test_image;
+extern float *train_image;
+extern float *test_image;
 extern int *train_image_label;
 extern int *test_image_label;
 
@@ -44,7 +44,7 @@ void init_mnist_buffers();
 
 void read_mnist_char(const char*, int, int, unsigned char*);
 
-void image_char2double(int, unsigned char*, double*);
+void image_char2float(int, unsigned char*, float*);
 
 void label_char2int(int, unsigned char*, int*);
 

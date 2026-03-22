@@ -13,8 +13,8 @@ unsigned char *test_image_char;
 unsigned char *train_label_char;
 unsigned char *test_label_char;
 
-double *train_image;
-double *test_image;
+float *train_image;
+float *test_image;
 int *train_image_label;
 int *test_image_label;
 
@@ -25,8 +25,8 @@ void init_mnist_buffers() {
     train_label_char = (unsigned char *)malloc(NUM_TRAIN * sizeof(unsigned char));
     test_label_char = (unsigned char *)malloc(NUM_TEST * sizeof(unsigned char));
     
-    train_image = (double *)malloc(NUM_TRAIN * SIZE * sizeof(double));
-    test_image = (double *)malloc(NUM_TEST * SIZE * sizeof(double));
+    train_image = (float *)malloc(NUM_TRAIN * SIZE * sizeof(float));
+    test_image = (float *)malloc(NUM_TEST * SIZE * sizeof(float));
     train_image_label = (int*)malloc(NUM_TRAIN * SIZE * sizeof(int));
     test_image_label = (int*)malloc(NUM_TEST * SIZE* sizeof(int));
 }
@@ -42,10 +42,10 @@ void read_mnist_char(const char *file_path, int num_data, int arr_n, unsigned ch
     close(fd);
 }
 
-// Convert 1D char array to 1D double array
-void image_char2double(int num_data, unsigned char *data_char, double *data_double) {
+// Convert 1D char array to 1D float array
+void image_char2float(int num_data, unsigned char *data_char, float *data_float) {
     for (int i = 0; i < num_data * SIZE; i++) {
-        data_double[i] = (double)data_char[i] / 255.0;
+        data_float[i] = (float)data_char[i] / 255.0;
     }
 }
 

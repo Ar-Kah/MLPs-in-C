@@ -2,7 +2,7 @@
 
 
 /* Softmax with minibatch */
-__global__ void safe_softmax_kernel(double* input, int size, double* output_probs, int batch_size) {
+__global__ void safe_softmax_kernel(float* input, int size, float* output_probs, int batch_size) {
 
     // Take the index of the image in the batch
     int batch_idx = blockDim.x * blockIdx.x + threadIdx.x;
@@ -12,7 +12,7 @@ __global__ void safe_softmax_kernel(double* input, int size, double* output_prob
         int starting_idx = batch_idx * size;
 
         // Initialize the max value as the first index
-        double max_val = input[starting_idx];
+        float max_val = input[starting_idx];
         // Find the max value
         for(int i = 1; i < size; i++) {
             if(input[starting_idx + i] > max_val) {
@@ -21,7 +21,7 @@ __global__ void safe_softmax_kernel(double* input, int size, double* output_prob
         }
 
         // Calculate the sum of exponents in softmax
-        double sum = 0.0;
+        float sum = 0.0;
         for (int i = 0; i < size; i++) {
             output_probs[starting_idx + i] = exp(input[starting_idx + i] - max_val); // Subtract max for stability
             sum += output_probs[starting_idx + i];
@@ -37,12 +37,12 @@ __global__ void safe_softmax_kernel(double* input, int size, double* output_prob
 }
 
 // Implementation of softmax layer
-__global__ void softmax_kernel(double* input, int size, double* output_dest) {
+__global__ void softmax_kernel(float* input, int size, float* output_dest) {
 
-    double max_val = input[0];
+    float max_val = input[0];
     for(int i = 1; i < size; i++) if(input[i] > max_val) max_val = input[i];
 
-    double sum = 0.0;
+    float sum = 0.0;
     for (int i = 0; i < size; i++) {
         output_dest[i] = exp(input[i] - max_val); // Subtract max for stability
         sum += output_dest[i];
@@ -54,8 +54,8 @@ __global__ void softmax_kernel(double* input, int size, double* output_dest) {
 /**
  * 2D forward pass for minibatches
  */
-__global__ void forward_kernel2d(double *input, double *weights, double *biases,
-                            double *preactivation, double *activation, int input_size,
+__global__ void forward_kernel2d(float *input, float *weights, float *biases,
+                            float *preactivation, float *activation, int input_size,
                             int output_size, int batch_size)
 {
     // Map threads to asoecific Neuron x and a specific image y
@@ -65,7 +65,7 @@ __global__ void forward_kernel2d(double *input, double *weights, double *biases,
     // Check bounds
     if ( neuron_idx < output_size && batch_idx < batch_size ) {
 
-        double sum = biases[neuron_idx];
+        float sum = biases[neuron_idx];
 
         for ( int i = 0; i < input_size; i++ ) {
             int input_idx = batch_idx * input_size + i;
@@ -94,8 +94,8 @@ __global__ void forward_kernel2d(double *input, double *weights, double *biases,
 
 
 /* Forward pass kernel for a layer */
-__global__ void forward_kernel(double *input, double *weights, double *biases,
-                            double *preactivation, double *activation,
+__global__ void forward_kernel(float *input, float *weights, float *biases,
+                            float *preactivation, float *activation,
                             int input_size, int output_size) {
 
     // determing threads to calculate each neuron
@@ -103,7 +103,7 @@ __global__ void forward_kernel(double *input, double *weights, double *biases,
 
     // Only work if this thread is corresponding to a valid neuron
     if (neuron_idx < output_size) {
-        double sum = biases[neuron_idx];
+        float sum = biases[neuron_idx];
 
         for (int i = 0; i < input_size; i++) {
             sum += input[i] * weights[i * output_size + neuron_idx];
@@ -121,7 +121,7 @@ __global__ void forward_kernel(double *input, double *weights, double *biases,
 }
 
 /* Zero gradients  */
-__global__ void zero_layer_gradients(double *grad_b, double *grad_in, int num_nodes) {
+__global__ void zero_layer_gradients(float *grad_b, float *grad_in, int num_nodes) {
     int output_dim_idx = blockIdx.x * blockDim.x + threadIdx.x;
 
     if (output_dim_idx < num_nodes) {
@@ -131,7 +131,7 @@ __global__ void zero_layer_gradients(double *grad_b, double *grad_in, int num_no
 }
 
 // Dedicated Kernel for Weight Gradients (Size: input_size * output_size)
-__global__ void zero_weight_gradients(double *grad_w, int total_weights) {
+__global__ void zero_weight_gradients(float *grad_w, int total_weights) {
     int weight_idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (weight_idx < total_weights) {
         grad_w[weight_idx] = 0.0;
@@ -139,9 +139,9 @@ __global__ void zero_weight_gradients(double *grad_w, int total_weights) {
 }
 
 __global__ void backward_kernel_output_layer2d(
-    double *grad_wtr_b, double *grad_wtr_w, double *previous_grad_wtr_input,
-    double *previous_activiation, double *weight, int input_size,
-    int output_size, int batch_size, int *target, double *probs) {
+    float *grad_wtr_b, float *grad_wtr_w, float *previous_grad_wtr_input,
+    float *previous_activiation, float *weight, int input_size,
+    int output_size, int batch_size, int *target, float *probs) {
 
   int neuron_idx = blockIdx.x * blockDim.x + threadIdx.x;
   int batch_idx = blockIdx.y * blockDim.y + threadIdx.y;
@@ -151,8 +151,8 @@ __global__ void backward_kernel_output_layer2d(
     int probs_idx = batch_idx * output_size + neuron_idx;
     // Calculate derivative for the softmax index (probs_idx)
     // if the neuron index is the same as the target then pass the error backwards
-    double target_val = (neuron_idx == target[batch_idx]) ? 1.0 : 0.0;
-    double delta = probs[probs_idx] - target_val;
+    float target_val = (neuron_idx == target[batch_idx]) ? 1.0 : 0.0;
+    float delta = probs[probs_idx] - target_val;
 
     atomicAdd(&grad_wtr_b[neuron_idx], delta);
 
@@ -167,9 +167,9 @@ __global__ void backward_kernel_output_layer2d(
 }
 
 __global__ void backward_kernel_output_layer(
-    double *grad_wrt_b, double *grad_wrt_w, double *previous_grad_wrt_input,
-    double *previous_activations, double *weights, int input_size,
-    int output_size, int target, double *probs) {
+    float *grad_wrt_b, float *grad_wrt_w, float *previous_grad_wrt_input,
+    float *previous_activations, float *weights, int input_size,
+    int output_size, int target, float *probs) {
 
     int neuron_idx = blockIdx.x * blockDim.x + threadIdx.x;
 
@@ -177,8 +177,8 @@ __global__ void backward_kernel_output_layer(
         // Shortcut for the derivative of the cross entropy loss with respect to the
         // input of softmax function Every other index other that the one that
         // corresponds to the target index is 0
-        double target_val = (neuron_idx == target) ? 1.0 : 0.0;
-        double delta = probs[neuron_idx] - target_val;
+        float target_val = (neuron_idx == target) ? 1.0 : 0.0;
+        float delta = probs[neuron_idx] - target_val;
 
         grad_wrt_b[neuron_idx] = delta;
 
@@ -192,15 +192,15 @@ __global__ void backward_kernel_output_layer(
 }
 
 __global__ void backward_kernel2d(Layer *layer, Layer *previous_layer,
-                                  double *initial_input, int current_layer_idx,
+                                  float *initial_input, int current_layer_idx,
                                   int batch_size)
 {
     int neuron_idx = blockIdx.x * blockDim.x + threadIdx.x;
     int batch_idx = blockIdx.y * blockDim.y + threadIdx.y;
 
     if (neuron_idx < layer->output_size && batch_idx < batch_size) {
-        double relu_derivation = layer->activations[batch_idx * layer->output_size + neuron_idx] > 0 ? 1.0 : 0.0;
-        double delta = layer->grad_wrt_input[batch_idx * layer->output_size + neuron_idx] * relu_derivation;
+        float relu_derivation = layer->activations[batch_idx * layer->output_size + neuron_idx] > 0 ? 1.0 : 0.0;
+        float delta = layer->grad_wrt_input[batch_idx * layer->output_size + neuron_idx] * relu_derivation;
 
         atomicAdd(&layer->grad_wrt_b[neuron_idx], delta);
 
@@ -208,7 +208,7 @@ __global__ void backward_kernel2d(Layer *layer, Layer *previous_layer,
             int weight_idx = (i * layer->output_size) + neuron_idx;
             int prev_act_idx = (batch_idx * layer->input_size) + i;
 
-            double prev_act = (current_layer_idx == 0) ? initial_input[prev_act_idx] : previous_layer->activations[prev_act_idx];
+            float prev_act = (current_layer_idx == 0) ? initial_input[prev_act_idx] : previous_layer->activations[prev_act_idx];
 
             atomicAdd(&layer->grad_wrt_w[weight_idx], delta * prev_act);
             
@@ -220,8 +220,8 @@ __global__ void backward_kernel2d(Layer *layer, Layer *previous_layer,
     }
 }
 
-__global__ void sparce_categorical_cross_entropy_kernel(double* probabilities, int* target_labels,
-                                                 int batch_size, int num_classes, double *loss) {
+__global__ void sparce_categorical_cross_entropy_kernel(float* probabilities, int* target_labels,
+                                                 int batch_size, int num_classes, float *loss) {
     int batch_idx = blockIdx.x * blockDim.x + threadIdx.x;
 
     if (batch_idx < batch_size) {
@@ -229,7 +229,7 @@ __global__ void sparce_categorical_cross_entropy_kernel(double* probabilities, i
 
         int target_idx_probs = (batch_idx * num_classes) + target;
 
-        double p = probabilities[target_idx_probs];
+        float p = probabilities[target_idx_probs];
 
         if (p < 1e-15) p = 1e-15;
         
@@ -237,14 +237,14 @@ __global__ void sparce_categorical_cross_entropy_kernel(double* probabilities, i
     }
 }
 
-__global__ void backward_kernel(Layer* layer, Layer* previous_layer, double* initial_inputs, int current_layer_idx) {
+__global__ void backward_kernel(Layer* layer, Layer* previous_layer, float* initial_inputs, int current_layer_idx) {
     
     int neuron_idx = blockIdx.x * blockDim.x + threadIdx.x;
 
     if (neuron_idx < layer->output_size) {
-        double delta = 0;
+        float delta = 0;
 
-        double relu_derivation = layer->activations[neuron_idx] == 0 ? 0.0 : 1.0; // If relu is not 0 then gradient is 1
+        float relu_derivation = layer->activations[neuron_idx] == 0 ? 0.0 : 1.0; // If relu is not 0 then gradient is 1
         delta = layer->grad_wrt_input[neuron_idx] * relu_derivation;
 
         layer->grad_wrt_b[neuron_idx] = delta;
@@ -255,7 +255,7 @@ __global__ void backward_kernel(Layer* layer, Layer* previous_layer, double* ini
             int weight_idx = input_size_idx * layer->output_size + neuron_idx;
 
             // Gradient is delta * activation of the previous layer
-            double *prev_act = (current_layer_idx == 0) ? initial_inputs : previous_layer->activations;
+            float *prev_act = (current_layer_idx == 0) ? initial_inputs : previous_layer->activations;
             layer->grad_wrt_w[weight_idx] = delta * prev_act[input_size_idx];
 
             // Pass error back to the previous layer
@@ -266,9 +266,9 @@ __global__ void backward_kernel(Layer* layer, Layer* previous_layer, double* ini
     }
 }
 
-__global__ void update_kernel_minibatch(double* weights, double* biases, double* grad_w,
-                                        double* grad_b, int input_size, int out_size,
-                                        double learning_rate, int batch_size)
+__global__ void update_kernel_minibatch(float* weights, float* biases, float* grad_w,
+                                        float* grad_b, int input_size, int out_size,
+                                        float learning_rate, int batch_size)
 {
     int neuron_idx = blockDim.x * blockIdx.x + threadIdx.x;
 
@@ -286,8 +286,8 @@ __global__ void update_kernel_minibatch(double* weights, double* biases, double*
     }
 }
 
-__global__ void update_kernel(double* weights, double* biases, double* grad_w, double* grad_b, 
-                             int in_size, int out_size, double learning_rate) {
+__global__ void update_kernel(float* weights, float* biases, float* grad_w, float* grad_b, 
+                             int in_size, int out_size, float learning_rate) {
     int neuron_idx = blockDim.x * blockIdx.x + threadIdx.x;
 
     if (neuron_idx < out_size) {

@@ -9,7 +9,7 @@ typedef struct {
     int num_layers;
 } Network;
 
-void update(Network *network, double learning_rate, int batch_size) {
+void update(Network *network, float learning_rate, int batch_size) {
     int threadsPerBlock = 256;
     for (int i = 0; i < network->num_layers; i++) {
         Layer *l = &network->layers[i];
@@ -23,7 +23,7 @@ void update(Network *network, double learning_rate, int batch_size) {
     }
 }
 
-void backward(Network *network, int *target, double* initial_inputs, double *probs, int batch_size) {
+void backward(Network *network, int *target, float* initial_inputs, float *probs, int batch_size) {
 
     dim3 threadsPerBlock(16, 16);
 
@@ -32,9 +32,9 @@ void backward(Network *network, int *target, double* initial_inputs, double *pro
         Layer *l = &network->layers[i];
 
         // cudaMemset for makeing sure that there is no gradient leak
-        cudaMemset(l->grad_wrt_b, 0, sizeof(double) * l->output_size);
-        cudaMemset(l->grad_wrt_w, 0, sizeof(double) * l->input_size * l->output_size);
-        cudaMemset(l->grad_wrt_input, 0, sizeof(double) * l->input_size * batch_size);
+        cudaMemset(l->grad_wrt_b, 0, sizeof(float) * l->output_size);
+        cudaMemset(l->grad_wrt_w, 0, sizeof(float) * l->input_size * l->output_size);
+        cudaMemset(l->grad_wrt_input, 0, sizeof(float) * l->input_size * batch_size);
     }
     CUDA_CHECK_ERR(cudaDeviceSynchronize());
 
@@ -70,11 +70,11 @@ void backward(Network *network, int *target, double* initial_inputs, double *pro
     }
 }
 
-void forward_test(Network *network, double *initial_inputs, int batch_size) {
+void forward(Network *network, float *initial_inputs, int batch_size) {
 
     dim3 threadsPerBlock(16, 16);
     
-    double *current_input = initial_inputs;
+    float *current_input = initial_inputs;
     // calculate the forward pass for all nodes in the network
     for (int x = 0; x < network->num_layers; x++) {
 
@@ -104,31 +104,31 @@ void init_layer(Layer *l, int in, int out, int batch_size) {
     l->output_size = out; // output dimetion
 
     // Allocate memory using cudaMalloc
-    cudaMalloc((void**)&l->weights, sizeof(double) * in * out);
-    cudaMalloc((void**)&l->biases, sizeof(double) * out);
-    cudaMalloc((void**)&l->preactivations, sizeof(double) * out * batch_size);
-    cudaMalloc((void**)&l->activations, sizeof(double) * out * batch_size);
-    cudaMalloc((void**)&l->grad_wrt_w, sizeof(double) * out * in);
-    cudaMalloc((void**)&l->grad_wrt_b, sizeof(double) * out);
-    cudaMalloc((void**)&l->grad_wrt_input, sizeof(double) * in * batch_size);
+    cudaMalloc((void**)&l->weights, sizeof(float) * in * out);
+    cudaMalloc((void**)&l->biases, sizeof(float) * out);
+    cudaMalloc((void**)&l->preactivations, sizeof(float) * out * batch_size);
+    cudaMalloc((void**)&l->activations, sizeof(float) * out * batch_size);
+    cudaMalloc((void**)&l->grad_wrt_w, sizeof(float) * out * in);
+    cudaMalloc((void**)&l->grad_wrt_b, sizeof(float) * out);
+    cudaMalloc((void**)&l->grad_wrt_input, sizeof(float) * in * batch_size);
 
     // allocate temp weights to cpu
-    double *temp_weights = (double*) malloc(in * out * sizeof(double));
+    float *temp_weights = (float*) malloc(in * out * sizeof(float));
     // Using HE initialization for ReLU activations
-    double scale = sqrt(2.0 / in);
+    float scale = sqrt(2.0 / in);
     for (int i = 0; i < in * out; i++) {
         // initialize values in the range of -1 to 1;
-        temp_weights[i] = (((double) rand() / RAND_MAX) * 2.0 - 1.0) * scale;
+        temp_weights[i] = (((float) rand() / RAND_MAX) * 2.0 - 1.0) * scale;
     }
 
-    double *temp_biases = (double*) malloc(out * sizeof(double));
+    float *temp_biases = (float*) malloc(out * sizeof(float));
     for (int i = 0; i < out; i++) {
         temp_biases[i] = 1.0f;
     }
 
     // Copy the weights and biases from the cpu to the gpu
-    cudaMemcpy(l->weights, temp_weights, in * out * sizeof(double), cudaMemcpyHostToDevice);
-    cudaMemcpy(l->biases, temp_biases, out * sizeof(double), cudaMemcpyHostToDevice);
+    cudaMemcpy(l->weights, temp_weights, in * out * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(l->biases, temp_biases, out * sizeof(float), cudaMemcpyHostToDevice);
     // free the temp weights from cpu ram
     free(temp_weights);
     free(temp_biases);
@@ -154,11 +154,11 @@ Network create_network_layers(int* layer_sizes, int num_layers, int batch_size) 
     return network;
 }
 
-void print_layer_stats(const char* name, double* d_grad, int size) {
-    double *h_grad = (double*)malloc(sizeof(double) * size);
-    cudaMemcpy(h_grad, d_grad, sizeof(double) * size, cudaMemcpyDeviceToHost);
+void print_layer_stats(const char* name, float* d_grad, int size) {
+    float *h_grad = (float*)malloc(sizeof(float) * size);
+    cudaMemcpy(h_grad, d_grad, sizeof(float) * size, cudaMemcpyDeviceToHost);
     
-    double sum = 0;
+    float sum = 0;
     for(int i = 0; i < size; i++) sum += fabs(h_grad[i]);
     
     printf("  [%s] Avg Grad Magnitude: %.10f\n", name, sum / size);
@@ -180,18 +180,18 @@ int main() {
     read_mnist_char(TRAIN_LABEL, NUM_TRAIN, 1, train_label_char);
     read_mnist_char(TEST_LABEL, NUM_TEST, 1, test_label_char);
 
-    // Convert to double
+    // Convert to float
     printf("Parsing image data to vector values\n");
-    image_char2double(NUM_TRAIN, train_image_char, train_image);
-    image_char2double(NUM_TEST, test_image_char, test_image);
+    image_char2float(NUM_TRAIN, train_image_char, train_image);
+    image_char2float(NUM_TEST, test_image_char, test_image);
     label_char2int(NUM_TRAIN, train_label_char, train_image_label);
     label_char2int(NUM_TEST, test_label_char, test_image_label);
 
     // NOW you can easily copy to GPU
     printf("Allocating memory for the gpu for images\n");
-    double *d_train_image;
-    cudaMalloc((void**)&d_train_image, NUM_TRAIN * SIZE * sizeof(double));
-    cudaMemcpy(d_train_image, train_image, NUM_TRAIN * SIZE * sizeof(double), cudaMemcpyHostToDevice);
+    float *d_train_image;
+    cudaMalloc((void**)&d_train_image, NUM_TRAIN * SIZE * sizeof(float));
+    cudaMemcpy(d_train_image, train_image, NUM_TRAIN * SIZE * sizeof(float), cudaMemcpyHostToDevice);
 
     // Initialize the batch size
     int batch_size = 64;
@@ -203,22 +203,22 @@ int main() {
     Network network = create_network_layers(layer_sizes, num_layers, batch_size);
 
     // Allocate probability array (array after softmax) for the host and device
-    double *dh_probs;
-    cudaMallocManaged((void**)&dh_probs, sizeof(double) * num_classes * batch_size);
+    float *dh_probs;
+    cudaMallocManaged((void**)&dh_probs, sizeof(float) * num_classes * batch_size);
     
     // allocate memory on the device (GPU) for inputs
-    double *d_input;
-    cudaMalloc((void**)&d_input, sizeof(double) * 784 * batch_size);
+    float *d_input;
+    cudaMalloc((void**)&d_input, sizeof(float) * 784 * batch_size);
 
     // allocate memory on the device for target valeus
     int *d_target;
     cudaMalloc((void**)&d_target, sizeof(int) * batch_size);
     int epochs = 4;
-    double learning_rate = 0.01;
+    float learning_rate = 0.01;
 
 
-    double *epoch_loss;
-    cudaMallocManaged((void**)&epoch_loss, sizeof(double));
+    float *epoch_loss;
+    cudaMallocManaged((void**)&epoch_loss, sizeof(float));
 
     printf("Started training\n");
     for (int e = 0; e < epochs; e++) {
@@ -231,15 +231,15 @@ int main() {
         // Cut the loop before pointing at garbage memory in the taraining image array.
         // The loop should stop when we still have room for one full batch
         for (int i = 0; i + batch_size <= num_train_img; i += batch_size) {
-            cudaMemcpy(d_input, train_image + (i * 784), sizeof(double) * 784 * batch_size, cudaMemcpyHostToDevice);
+            cudaMemcpy(d_input, train_image + (i * 784), sizeof(float) * 784 * batch_size, cudaMemcpyHostToDevice);
             cudaMemcpy(d_target, train_image_label + i, sizeof(int) * batch_size, cudaMemcpyHostToDevice);
 
-            forward_test(&network, d_input, batch_size);
+            forward(&network, d_input, batch_size);
 
             int threadsPerBlock = 256;
             int blocksPerGrid = (batch_size + threadsPerBlock - 1) / threadsPerBlock;
             
-            double *output_layer_activations_ptr = network.layers[network.num_layers - 1].activations;
+            float *output_layer_activations_ptr = network.layers[network.num_layers - 1].activations;
             safe_softmax_kernel<<<blocksPerGrid, threadsPerBlock>>>(output_layer_activations_ptr,
                                                                num_classes, dh_probs, batch_size);
             
@@ -253,16 +253,16 @@ int main() {
             backward(&network, d_target, d_input, dh_probs, batch_size);
 
             // Print detailed telemetry every 100 batches
-            // if (step % 100 == 0) {
-            //     printf("\n--- Epoch %d | Batch %d ---\n", e, step);
-            //     printf("  Current Batch Loss: %.6f\n", (*epoch_loss) / (step + 1));
+            if (step % 100 == 0) {
+                printf("\n--- Epoch %d | Batch %d ---\n", e, step);
+                printf("  Current Batch Loss: %.6f\n", (*epoch_loss) / (step + 1));
                 
-            //     // Peek at the first and last layer gradients to check for Vanishing Gradients
-            //     print_layer_stats("Output Layer Weights", network.layers[num_layers-1].grad_wrt_w, 
-            //                       network.layers[num_layers-1].input_size * 10);
-            //     print_layer_stats("Input Layer Weights", network.layers[0].grad_wrt_w, 
-            //                       784 * network.layers[0].output_size);
-            // }
+                // Peek at the first and last layer gradients to check for Vanishing Gradients
+                print_layer_stats("Output Layer Weights", network.layers[num_layers-1].grad_wrt_w, 
+                                  network.layers[num_layers-1].input_size * 10);
+                print_layer_stats("Input Layer Weights", network.layers[0].grad_wrt_w, 
+                                  784 * network.layers[0].output_size);
+            }
 
             update(&network, learning_rate, batch_size);
 
