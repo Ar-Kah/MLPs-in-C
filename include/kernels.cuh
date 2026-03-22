@@ -67,6 +67,15 @@ __global__ void sparce_categorical_cross_entropy_kernel(float* probabilities, in
 __global__ void backward_kernel(Layer *layer, Layer *previous_layer,
                                 float *initial_inputs, int current_layer_idx);
 
+
+__global__ void update_biases_1d_kernel(float *biases, float *grad_b,
+                                        int output_size, float learning_rate,
+                                        int batch_size);
+
+__global__ void update_weights_2d_kernel(float* weights, float* grad_w,
+                                         int input_size, int output_size,
+                                         float learning_rate, int batch_size);
+
 __global__ void update_kernel_minibatch(float* weights, float* biases, float* grad_w,
                                         float* grad_b, int input_size, int out_size,
                                         float learning_rate, int batch_size);

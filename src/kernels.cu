@@ -266,6 +266,31 @@ __global__ void backward_kernel(Layer* layer, Layer* previous_layer, float* init
     }
 }
 
+__global__ void update_biases_1d_kernel(float *biases, float *grad_b,
+                                        int output_size, float learning_rate,
+                                        int batch_size)
+{
+    int neuron_idx = blockDim.x * blockIdx.x + threadIdx.x;
+
+    if (neuron_idx < output_size) {
+        grad_b[neuron_idx] -= learning_rate * (grad_b[neuron_idx] / batch_size);
+    }
+}
+
+__global__ void update_weights_2d_kernel(float* weights, float* grad_w,
+                                         int input_size, int output_size,
+                                         float learning_rate, int batch_size)
+{
+    int neuron_idx = blockDim.x * blockIdx.x + threadIdx.x;
+    int input_idx = blockDim.y * blockIdx.y + threadIdx.y;
+
+    if (neuron_idx < output_size && input_idx < input_size) {
+        int weight_idx = input_idx * output_size + neuron_idx;
+
+        weights[weight_idx] -= learning_rate * (grad_w[weight_idx] / batch_size);
+    }
+}
+
 __global__ void update_kernel_minibatch(float* weights, float* biases, float* grad_w,
                                         float* grad_b, int input_size, int out_size,
                                         float learning_rate, int batch_size)

@@ -176,17 +176,28 @@ Network create_network_layers(int* layer_sizes, int num_layers, int batch_size) 
 }
 
 void update(Network *network, float learning_rate, int batch_size) {
-    int threadsPerBlock = 256;
     for (int i = 0; i < network->num_layers; i++) {
         Layer *l = &network->layers[i];
-        int blocks = (l->output_size + threadsPerBlock - 1) / threadsPerBlock;
 
-        update_kernel_minibatch<<<blocks, threadsPerBlock>>>(
-            l->weights, l->biases, l->grad_wrt_w, l->grad_wrt_b, 
-            l->input_size, l->output_size, learning_rate, batch_size
+        // Update biases with 1d kernel
+        int threads1d = 256;
+        int blocks1d = (l->output_size + threads1d - 1) / threads1d;
+
+        update_biases_1d_kernel<<<threads1d, blocks1d>>>(l->biases, l->grad_wrt_b, l->output_size,
+                                                         learning_rate, batch_size);
+
+        // Update weights with 2d kernel
+        dim3 threads2d(16, 16);        
+        dim3 blocks2d(
+            (l->output_size + threads2d.x -1) / threads2d.x,
+            (l->input_size + threads2d.y -1) / threads2d.y
         );
-        CUDA_CHECK_ERR(cudaDeviceSynchronize()); 
+
+        update_weights_2d_kernel<<<blocks2d, threads2d>>>(l->weights, l->grad_wrt_w,
+                                                          l->input_size, l->output_size,
+                                                          learning_rate, batch_size);
     }
+    CUDA_CHECK_ERR(cudaDeviceSynchronize()); 
 }
 
 void update(Network *network, float learning_rate) {
