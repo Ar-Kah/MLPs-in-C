@@ -135,16 +135,16 @@ void init_layer(Layer *l, int in, int out, int batch_size) {
 
     // Device memory allocation for the adam parameters
     cudaMalloc((void**)&l->m_b, sizeof(float) * out); // size: out
-    cudaMalloc((void**)&l->m_w, sizeof(float) * in * batch_size); // size: in * batch
+    cudaMalloc((void**)&l->m_w, sizeof(float) * in * out); // size: in * batch
 
-    cudaMalloc((void**)&l->v_w, sizeof(float) * out);
-    cudaMalloc((void**)&l->v_w, sizeof(float) * in * batch_size);
+    cudaMalloc((void**)&l->v_b, sizeof(float) * out);
+    cudaMalloc((void**)&l->v_w, sizeof(float) * in * out);
 
-    // Initialize the values to 0 on the device
-    cudaMemset(&l->v_w, 0, sizeof(float) * in * batch_size);
-    cudaMemset(&l->v_b, 0, sizeof(float) * out);
-    cudaMemset(&l->m_w, 0, sizeof(float) * in * batch_size);
-    cudaMemset(&l->m_b, 0, sizeof(float) * out);
+    // Initialize all of the momentum values to 0
+    cudaMemset(l->m_w, 0, sizeof(float) * in * out);
+    cudaMemset(l->v_w, 0, sizeof(float) * in * out);
+    cudaMemset(l->m_b, 0, sizeof(float) * out);
+    cudaMemset(l->v_b, 0, sizeof(float) * out);
 
     // allocate temp weights to cpu
     float *temp_weights = (float*) malloc(in * out * sizeof(float));
@@ -189,6 +189,10 @@ Network create_network_layers(int* layer_sizes, int num_layers, int batch_size) 
 }
 
 void update(Network *network, float learning_rate, int batch_size) {
+    // Initialize beta values for adam optimizer
+    float beta1 = 0.9;
+    float beta2 = 0.999;
+
     for (int i = 0; i < network->num_layers; i++) {
         Layer *l = &network->layers[i];
 
@@ -197,7 +201,8 @@ void update(Network *network, float learning_rate, int batch_size) {
         int blocks1d = (l->output_size + threads1d - 1) / threads1d;
 
         update_biases_1d_kernel<<<threads1d, blocks1d>>>(l->biases, l->grad_wrt_b, l->output_size,
-                                                         learning_rate, batch_size);
+                                                         learning_rate, batch_size, beta1, beta2,
+                                                         l->m_b, l->v_b);
 
         // Update weights with 2d kernel
         dim3 threads2d(16, 16);        
@@ -208,7 +213,8 @@ void update(Network *network, float learning_rate, int batch_size) {
 
         update_weights_2d_kernel<<<blocks2d, threads2d>>>(l->weights, l->grad_wrt_w,
                                                           l->input_size, l->output_size,
-                                                          learning_rate, batch_size);
+                                                          learning_rate, batch_size,
+                                                          beta1, beta2, l->m_w, l->v_w);
     }
     CUDA_CHECK_ERR(cudaDeviceSynchronize()); 
 }
@@ -289,7 +295,7 @@ int main() {
     cudaMemcpy(d_train_image, train_image, NUM_TRAIN * SIZE * sizeof(float), cudaMemcpyHostToDevice);
 
     // Initialize the batch size
-    int batch_size = 32;
+    int batch_size = 64;
 
     printf("Initializing network\n");
     int layer_sizes[] = {784, 128, 64, 10};
@@ -311,7 +317,7 @@ int main() {
 
     // Initialize hypreparameters num of epochs and learning rate
     int epochs = 20;
-    float learning_rate = 0.01;
+    float learning_rate = 0.001;
 
 
     // The epoch loss has to be a pointer to the host and device

@@ -266,28 +266,47 @@ __global__ void backward_kernel(Layer* layer, Layer* previous_layer, float* init
     }
 }
 
+// update biases kernel using adam optimizers momentum values
 __global__ void update_biases_1d_kernel(float *biases, float *grad_b,
                                         int output_size, float learning_rate,
-                                        int batch_size)
+                                        int batch_size, float beta1,
+                                        float beta2, float* m_b, float* v_b)
 {
     int neuron_idx = blockDim.x * blockIdx.x + threadIdx.x;
 
     if (neuron_idx < output_size) {
-        grad_b[neuron_idx] -= learning_rate * (grad_b[neuron_idx] / batch_size);
+        float g_norm = grad_b[neuron_idx] / batch_size;
+        // Calculate the fist momentum value m_b
+        m_b[neuron_idx] = beta1 * m_b[neuron_idx] + (1 - beta1) * g_norm;
+        // Calculate the second momentum value v_b
+        v_b[neuron_idx] = beta2 * v_b[neuron_idx] + (1 - beta2) * (g_norm * g_norm);
+
+        grad_b[neuron_idx] -= learning_rate * m_b[neuron_idx] / (sqrtf(v_b[neuron_idx]) + EPSILON);
     }
 }
 
 __global__ void update_weights_2d_kernel(float* weights, float* grad_w,
                                          int input_size, int output_size,
-                                         float learning_rate, int batch_size)
+                                         float learning_rate, int batch_size,
+                                         float beta1, float beta2,
+                                         float* m_w, float *v_w)
 {
     int neuron_idx = blockDim.x * blockIdx.x + threadIdx.x;
     int input_idx = blockDim.y * blockIdx.y + threadIdx.y;
 
     if (neuron_idx < output_size && input_idx < input_size) {
-        int weight_idx = input_idx * output_size + neuron_idx;
+        int idx = input_idx * output_size + neuron_idx;
 
-        weights[weight_idx] -= learning_rate * (grad_w[weight_idx] / batch_size);
+        // Normalize the gradient wtr batch size
+        float g_norm = grad_w[idx] / batch_size;
+
+        // Calculate the fist momentum value m_w
+        m_w[idx] = beta1 * m_w[idx] + (1 - beta1) * g_norm;
+
+        // Calculate the second momentum value v_w
+        v_w[idx] = beta2 * v_w[idx] + (1 - beta2) * (g_norm * g_norm);
+
+        weights[idx] -= learning_rate * m_w[idx] / (sqrtf(v_w[idx]) + EPSILON);
     }
 }
 
@@ -312,7 +331,7 @@ __global__ void update_kernel_minibatch(float* weights, float* biases, float* gr
 }
 
 __global__ void update_kernel(float* weights, float* biases, float* grad_w, float* grad_b, 
-                             int in_size, int out_size, float learning_rate) {
+                              int in_size, int out_size, float learning_rate) {
     int neuron_idx = blockDim.x * blockIdx.x + threadIdx.x;
 
     if (neuron_idx < out_size) {

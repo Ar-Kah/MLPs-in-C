@@ -84,11 +84,14 @@ __global__ void backward_kernel(Layer *layer, Layer *previous_layer,
 
 __global__ void update_biases_1d_kernel(float *biases, float *grad_b,
                                         int output_size, float learning_rate,
-                                        int batch_size);
+                                        int batch_size, float beta1, float beta2,
+                                        float* m_b, float* v_b);
 
 __global__ void update_weights_2d_kernel(float* weights, float* grad_w,
                                          int input_size, int output_size,
-                                         float learning_rate, int batch_size);
+                                         float learning_rate, int batch_size,
+                                         float beta1, float beta2, float* m_w,
+                                         float* v_w);
 
 __global__ void update_kernel_minibatch(float* weights, float* biases, float* grad_w,
                                         float* grad_b, int input_size, int out_size,
