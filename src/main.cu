@@ -137,6 +137,15 @@ void init_layer(Layer *l, int in, int out, int batch_size) {
     cudaMalloc((void**)&l->m_b, sizeof(float) * out); // size: out
     cudaMalloc((void**)&l->m_w, sizeof(float) * in * batch_size); // size: in * batch
 
+    cudaMalloc((void**)&l->v_w, sizeof(float) * out);
+    cudaMalloc((void**)&l->v_w, sizeof(float) * in * batch_size);
+
+    // Initialize the values to 0 on the device
+    cudaMemset(&l->v_w, 0, sizeof(float) * in * batch_size);
+    cudaMemset(&l->v_b, 0, sizeof(float) * out);
+    cudaMemset(&l->m_w, 0, sizeof(float) * in * batch_size);
+    cudaMemset(&l->m_b, 0, sizeof(float) * out);
+
     // allocate temp weights to cpu
     float *temp_weights = (float*) malloc(in * out * sizeof(float));
     // Using HE initialization for ReLU activations
