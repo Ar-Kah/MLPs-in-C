@@ -7,8 +7,6 @@
 #include "kernels.cuh"
 #include "mnist.h"
 
-// define macro for getting the size of a list of integers
-#define LEN(x) (sizeof(x) / sizeof(x[0]))
 
 typedef struct {
     Layer *layers;
@@ -24,7 +22,7 @@ float sparce_categorical_cross_entropy(float *predictions, int label_index) {
     // label_index is the actual number of 0-9
     float p = predictions[label_index];
 
-    if (p < 1e-15) p = 1e-15;
+    if (p < EPSILON) p = EPSILON;
 
     return -log(p);
 }
@@ -32,9 +30,8 @@ float sparce_categorical_cross_entropy(float *predictions, int label_index) {
 // The derivative of BCE Loss with respect to the Sigmoid activation
 float bce_derivative(float target, float prediction) {
     // We add a tiny epsilon to prevent division by zero
-    float epsilon = 1e-7f;
-    if (prediction < epsilon) prediction = epsilon;
-    if (prediction > 1.0f - epsilon) prediction = 1.0f - epsilon;
+    if (prediction < EPSILON) prediction = EPSILON;
+    if (prediction > 1.0f - EPSILON) prediction = 1.0f - EPSILON;
 
     return (prediction - target) / (prediction * (1.0f - prediction));
 }
@@ -124,14 +121,21 @@ void init_layer(Layer *l, int in, int out, int batch_size) {
     l->input_size = in; // input dimetion
     l->output_size = out; // output dimetion
 
-    // Allocate memory using cudaMalloc
+    // Device memory allocation for the parameters
     cudaMalloc((void**)&l->weights, sizeof(float) * in * out);
     cudaMalloc((void**)&l->biases, sizeof(float) * out);
+
     cudaMalloc((void**)&l->preactivations, sizeof(float) * out * batch_size);
     cudaMalloc((void**)&l->activations, sizeof(float) * out * batch_size);
+
+    // Device memory allocation for gradients
     cudaMalloc((void**)&l->grad_wrt_w, sizeof(float) * out * in);
     cudaMalloc((void**)&l->grad_wrt_b, sizeof(float) * out);
     cudaMalloc((void**)&l->grad_wrt_input, sizeof(float) * in * batch_size);
+
+    // Device memory allocation for the adam parameters
+    cudaMalloc((void**)&l->m_b, sizeof(float) * out); // size: out
+    cudaMalloc((void**)&l->m_w, sizeof(float) * in * batch_size); // size: in * batch
 
     // allocate temp weights to cpu
     float *temp_weights = (float*) malloc(in * out * sizeof(float));

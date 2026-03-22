@@ -6,6 +6,8 @@
 #include <math.h>
 #include <stdio.h>
 
+#define EPSILON 1e-15
+
 #define CUDA_CHECK_ERR(ans) { gpuAssert((ans), __FILE__, __LINE__); }
 inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort=true)
 {

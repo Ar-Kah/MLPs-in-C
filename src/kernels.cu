@@ -231,7 +231,7 @@ __global__ void sparce_categorical_cross_entropy_kernel(float* probabilities, in
 
         float p = probabilities[target_idx_probs];
 
-        if (p < 1e-15) p = 1e-15;
+        if (p < EPSILON) p = EPSILON;
         
         atomicAdd(loss, -log(p));
     }
