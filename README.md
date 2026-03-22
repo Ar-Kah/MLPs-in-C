@@ -20,12 +20,12 @@ The network is configured to process the **MNIST dataset**, consisting of 60,000
 ## 🛠️ Technical Implementation
 
 ### 1. Parallel Forward Pass
-Each neuron's activation is calculated in parallel across GPU threads. The pre-activation sum is stored to facilitate the backward pass: $$z_j = \text{bias}_j + \sum_{i=0}^{n} (\text{input}_i \cdot \text{weight}_{ij})$$
+Each neuron's activation is calculated in parallel across GPU threads. The pre-activation sum is stored to facilitate the backward pass: $$z\_{b,j} = \text{bias}\_j + \sum_{i=0}^{n-1} (\text{input}\_{b,i} \cdot \text{weight}\_{ij})$$
 
 ### 2. Loss & Optimization
 * **Activation**: ReLU for hidden layers; Softmax for the output layer.
 * **Loss Function**: Categorical Cross-Entropy for multi-class classification.
-* **Optimizer**: Stochastic Gradient Descent (SGD) with parallel weight/bias updates via `update_kernel`.
+* **Optimizer**: Stochastic Gradient Descent (SGD) with parallel weight/bias updates via `update_weights_2d_kernel` and `update_biases_1d_kernel` where the parameters are normalized with the batch size.
 
 ### 3. Backpropagation
 The error is propagated backward using custom kernels. For the output layer using Softmax and Cross-Entropy, the gradient simplifies to:
@@ -34,7 +34,7 @@ $$\delta_{output} = \text{Probs} - \text{Target}$$
 For hidden layers, the error is calculated by accumulating gradients from the subsequent layer:
 $$\delta_{hidden} = (\sum w_{next} \cdot \delta_{next}) \cdot \text{ReLU}'(z)$$
 
-
+2D Grid Mapping: Backward pass kernels utilize a 2D grid (dim3 threadsPerBlock(16, 16)) where blockIdx.y maps to the batch sample and blockIdx.x maps to the neuron, allowing for simultaneous calculation of gradients across the entire mini-batch.
 
 ## 💻 Getting Started
 
@@ -46,4 +46,4 @@ $$\delta_{hidden} = (\sum w_{next} \cdot \delta_{next}) \cdot \text{ReLU}'(z)$$
 ### Compilation
 Compile using the NVIDIA CUDA Compiler (`nvcc`):
 ```bash
-nvcc main.cu -o mlp_cuda
+make && make run
