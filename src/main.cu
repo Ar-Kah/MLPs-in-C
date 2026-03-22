@@ -238,7 +238,7 @@ void print_layer_stats(const char* name, float* d_grad, int size) {
     float sum = 0;
     for(int i = 0; i < size; i++) sum += fabs(h_grad[i]);
     
-    printf("  [%s] Avg Grad Magnitude: %.10f\n", name, sum / size);
+    printf("  [%s] Avg Grad Magnitude: %.4f\n", name, sum / size);
     free(h_grad);
 }
 
@@ -276,7 +276,7 @@ int main() {
     cudaMemcpy(d_train_image, train_image, NUM_TRAIN * SIZE * sizeof(float), cudaMemcpyHostToDevice);
 
     // Initialize the batch size
-    int batch_size = 128;
+    int batch_size = 32;
 
     printf("Initializing network\n");
     int layer_sizes[] = {784, 128, 64, 10};
@@ -295,10 +295,13 @@ int main() {
     // allocate memory on the device for target valeus
     int *d_target;
     cudaMalloc((void**)&d_target, sizeof(int) * batch_size);
-    int epochs = 4;
+
+    // Initialize hypreparameters num of epochs and learning rate
+    int epochs = 20;
     float learning_rate = 0.01;
 
 
+    // The epoch loss has to be a pointer to the host and device
     float *epoch_loss;
     cudaMallocManaged((void**)&epoch_loss, sizeof(float));
 
@@ -330,21 +333,19 @@ int main() {
                                                                                  batch_size, num_classes,
                                                                                  epoch_loss);
 
-            CUDA_CHECK_ERR(cudaDeviceSynchronize());
-
             backward(&network, d_target, d_input, dh_probs, batch_size);
 
             // Print detailed telemetry every 100 batches
-            if (step % 100 == 0) {
-                printf("\n--- Epoch %d | Batch %d ---\n", e, step);
-                printf("  Current Batch Loss: %.6f\n", (*epoch_loss) / (step + 1));
+            // if (step % 100 == 0) {
+            //     printf("\n--- Epoch %d | Batch %d ---\n", e +1, step);
+            //     printf("  Current Batch Loss: %.2f\n", (*epoch_loss) / (step + 1));
                 
-                // Peek at the first and last layer gradients to check for Vanishing Gradients
-                print_layer_stats("Output Layer Weights", network.layers[num_layers-1].grad_wrt_w, 
-                                  network.layers[num_layers-1].input_size * 10);
-                print_layer_stats("Input Layer Weights", network.layers[0].grad_wrt_w, 
-                                  784 * network.layers[0].output_size);
-            }
+            //     // Peek at the first and last layer gradients to check for Vanishing Gradients
+            //     print_layer_stats("Output Layer Weights", network.layers[num_layers-1].grad_wrt_w, 
+            //                       network.layers[num_layers-1].input_size * 10);
+            //     print_layer_stats("Input Layer Weights", network.layers[0].grad_wrt_w, 
+            //                       784 * network.layers[0].output_size);
+            // }
 
             update(&network, learning_rate, batch_size);
 
@@ -353,8 +354,8 @@ int main() {
         
         // End of Epoch Summary
         printf("\n==============================\n");
-        printf(" EPOCH %d COMPLETED\n", e);
-        printf(" Average Loss: %.6f\n", *epoch_loss / (num_train_img / batch_size));
+        printf(" EPOCH %d COMPLETED\n", e +1);
+        printf(" Average Loss: %.4f\n", *epoch_loss / (num_train_img / batch_size));
         printf("==============================\n\n");
     }
 
