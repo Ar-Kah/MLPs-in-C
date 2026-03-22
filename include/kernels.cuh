@@ -17,15 +17,27 @@ inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort=t
 }
 
 typedef struct {
+    // Dimentions
     int input_size;
     int output_size;
+
+    // Parameters
     float *weights;
     float *biases;
+
     float *preactivations;
     float *activations;
+
+    // Gradients in the layer
     float *grad_wrt_w;
     float *grad_wrt_b;
     float *grad_wrt_input;
+
+    // Momentum parameters for adam optimizer
+    float *m_w;
+    float *v_w;
+    float *m_b;
+    float *v_b;
 } Layer;
 /**
  */
