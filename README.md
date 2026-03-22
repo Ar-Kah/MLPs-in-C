@@ -7,6 +7,7 @@ A high-performance **Multi-Layer Perceptron (MLP)** implementation written in **
 * **GPU Memory Management**: Manual orchestration of `cudaMalloc`, `cudaMemcpy`, and `cudaMallocManaged` for efficient data throughput.
 * **ReLU & Softmax Architecture**: Optimized for deep learning with **ReLU** activations in hidden layers and **Softmax** for multi-class probability distribution.
 * **He Initialization**: Weights are scaled using $\sqrt{2/n}$ to maintain stable variance across layers.
+* **Adam optimizer**: Parameters are updated with the help of momentum.
 
 ## 🧠 The MNIST Challenge
 The network is configured to process the **MNIST dataset**, consisting of 60,000 training images of handwritten digits (0-9). 
@@ -36,6 +37,12 @@ $$\delta_{hidden} = (\sum w_{next} \cdot \delta_{next}) \cdot \text{ReLU}'(z)$$
 
 2D Grid Mapping: Backward pass kernels utilize a 2D grid (dim3 threadsPerBlock(16, 16)) where blockIdx.y maps to the batch sample and blockIdx.x maps to the neuron, allowing for simultaneous calculation of gradients across the entire mini-batch.
 
+### 4. Parameter update
+The network parameters are updated using the adam optimizer.
+$$m_t = \beta_1 m_{t-1} + (1 - \beta_1) g_t$$\
+$$v_t = \beta_2 v_{t-1} + (1 - \beta_2) g_t^2$$\
+$$w_{t+1} = w_t - \eta \frac{\hat{m}_t}{\sqrt{\hat{v}_t} + \epsilon}$$\
+Where $$\beta_1$$ is a constant of $$0.9$$, $$\beta_2$$ is a constant of $$0.999$$ and $$g$$ is the gradeint.
 ## 💻 Getting Started
 
 ### Prerequisites
