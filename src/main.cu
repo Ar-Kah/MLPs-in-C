@@ -308,37 +308,49 @@ int main() {
     cudaMallocManaged((void**)&dh_probs, sizeof(float) * num_classes * batch_size);
     
     // allocate memory on the device (GPU) for inputs
-    float *d_input;
-    cudaMalloc((void**)&d_input, sizeof(float) * 784 * batch_size);
+    float *d_train_input;
+    cudaMalloc((void**)&d_train_input, sizeof(float) * 784 * batch_size);
 
     // allocate memory on the device for target valeus
-    int *d_target;
-    cudaMalloc((void**)&d_target, sizeof(int) * batch_size);
+    int *d_train_target;
+    cudaMalloc((void**)&d_train_target, sizeof(int) * batch_size);
+
+    // Allocate memory for the device for the test images
+    float *d_test_input;
+    cudaMalloc((void**)&d_test_input, sizeof(float) * 784 * batch_size);
+
+    // Allocate memory for the device for the test image labels
+    int *d_test_target;
+    cudaMalloc((void**)&d_test_target, sizeof(int) * batch_size);
 
     // Initialize hypreparameters num of epochs and learning rate
-    int epochs = 20;
+    int epochs = 6;
     float learning_rate = 0.001;
-
 
     // The epoch loss has to be a pointer to the host and device
     float *epoch_loss;
     cudaMallocManaged((void**)&epoch_loss, sizeof(float));
+
+    float *validation_loss;
+    cudaMallocManaged((void**)&validation_loss, sizeof(float));
+
+    int num_train_img = 60000;
+    int num_test_img = 10000;
 
     printf("Started training\n");
     for (int e = 0; e < epochs; e++) {
         // CORRECTED: To zero a Managed Memory pointer, use the dereference operator
         *epoch_loss = 0.0; 
 
-        int num_train_img = 60000;
         int step = 0;
 
         // Cut the loop before pointing at garbage memory in the taraining image array.
         // The loop should stop when we still have room for one full batch
         for (int i = 0; i + batch_size <= num_train_img; i += batch_size) {
-            cudaMemcpy(d_input, train_image + (i * 784), sizeof(float) * 784 * batch_size, cudaMemcpyHostToDevice);
-            cudaMemcpy(d_target, train_image_label + i, sizeof(int) * batch_size, cudaMemcpyHostToDevice);
+            cudaMemcpy(d_train_input, train_image + (i * 784), sizeof(float) * 784 * batch_size, cudaMemcpyHostToDevice);
+            cudaMemcpy(d_train_target, train_image_label + i, sizeof(int) * batch_size, cudaMemcpyHostToDevice);
 
-            forward(&network, d_input, batch_size);
+            forward(&network, d_train_input, batch_size);
 
             int threadsPerBlock = 256;
             int blocksPerGrid = (batch_size + threadsPerBlock - 1) / threadsPerBlock;
@@ -348,11 +360,11 @@ int main() {
                                                                num_classes, dh_probs, batch_size);
             
             CUDA_CHECK_ERR(cudaDeviceSynchronize());
-            sparce_categorical_cross_entropy_kernel<<<blocksPerGrid, threadsPerBlock>>>(dh_probs, d_target,
+            sparce_categorical_cross_entropy_kernel<<<blocksPerGrid, threadsPerBlock>>>(dh_probs, d_train_target,
                                                                                  batch_size, num_classes,
                                                                                  epoch_loss);
 
-            backward(&network, d_target, d_input, dh_probs, batch_size);
+            backward(&network, d_train_target, d_train_input, dh_probs, batch_size);
 
             // Print detailed telemetry every 100 batches
             // if (step % 100 == 0) {
@@ -371,10 +383,47 @@ int main() {
             step++;
         }
         
+        // Zero the validation loss
+        *validation_loss = 0.0f;
+        // Make the validation pass
+        for (int i = 0; i + batch_size <= num_test_img; i += batch_size) {
+
+            cudaMemcpy(d_test_input, test_image + (i * 784), sizeof(float) * 784 * batch_size, cudaMemcpyHostToDevice);
+            cudaMemcpy(d_test_target, test_image_label + i, sizeof(int) * batch_size, cudaMemcpyHostToDevice);
+
+            forward(&network, d_test_input, batch_size);
+            
+            int threadsPerBlock = 256;
+            int blocksPerGrid = (batch_size + threadsPerBlock - 1) / threadsPerBlock;
+
+            float *output_layer_activations_ptr = network.layers[network.num_layers - 1].activations;
+            safe_softmax_kernel<<<blocksPerGrid, threadsPerBlock>>>(output_layer_activations_ptr,
+                                                               num_classes, dh_probs, batch_size);
+            
+            CUDA_CHECK_ERR(cudaDeviceSynchronize());
+            sparce_categorical_cross_entropy_kernel<<<blocksPerGrid, threadsPerBlock>>>(dh_probs, d_test_target,
+                                                                                 batch_size, num_classes,
+                                                                                 validation_loss);
+        
+            // calculate batch validation accuracy
+            float *h_probs = (float*)malloc(sizeof(float) * num_classes * batch_size);
+            cudaMemcpy(h_probs, dh_probs, sizeof(float) * num_classes * batch_size, cudaMemcpyDeviceToHost);
+
+            int correct = 0;
+            for (int b = 0; b < batch_size; b++) {
+                int pred = get_max_value_index(h_probs + (b * num_classes), num_classes);
+                if (pred == test_image_label[i + b]) {
+                    correct++;
+                }
+            }
+        
+        }
+
         // End of Epoch Summary
         printf("\n==============================\n");
         printf(" EPOCH %d COMPLETED\n", e +1);
-        printf(" Average Loss: %.4f\n", *epoch_loss / (num_train_img / batch_size));
+        printf(" Average training Loss: %.4f\n", *epoch_loss / (num_train_img / batch_size));
+        printf(" Average validation Loss: %.4f\n", *validation_loss / (num_test_img / batch_size));
         printf("==============================\n\n");
     }
 
@@ -394,9 +443,11 @@ int main() {
 
     cudaFree(network.layers);
 
-    cudaFree(d_input);
+    cudaFree(d_train_input);
     cudaFree(dh_probs);
     cudaFree(d_train_image);
+    cudaFree(d_test_input);
+    cudaFree(d_test_target);
     free(train_image);
     free(test_image);
     free(train_image_label);
