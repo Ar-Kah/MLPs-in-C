@@ -406,16 +406,16 @@ int main() {
                                                                                  validation_loss);
         
             // calculate batch validation accuracy
-            float *h_probs = (float*)malloc(sizeof(float) * num_classes * batch_size);
-            cudaMemcpy(h_probs, dh_probs, sizeof(float) * num_classes * batch_size, cudaMemcpyDeviceToHost);
+            // float *h_probs = (float*)malloc(sizeof(float) * num_classes * batch_size);
+            // cudaMemcpy(h_probs, dh_probs, sizeof(float) * num_classes * batch_size, cudaMemcpyDeviceToHost);
 
-            int correct = 0;
-            for (int b = 0; b < batch_size; b++) {
-                int pred = get_max_value_index(h_probs + (b * num_classes), num_classes);
-                if (pred == test_image_label[i + b]) {
-                    correct++;
-                }
-            }
+            // int correct = 0;
+            // for (int b = 0; b < batch_size; b++) {
+            //     int pred = get_max_value_index(h_probs + (b * num_classes), num_classes);
+            //     if (pred == test_image_label[i + b]) {
+            //         correct++;
+            //     }
+            // }
         
         }
 
