@@ -345,3 +345,34 @@ __global__ void update_kernel(float* weights, float* biases, float* grad_w, floa
         }
     }
 }
+
+__global__ void batch_stats_kernel(int input_dim, int batch_size, float* input, float* sum, float* sum_sq) {
+    int batch_idx = blockDim.x * blockIdx.x + threadIdx.x;
+
+    if (batch_idx < batch_size) {
+        for (int i = 0; i < input_dim; i++) {
+            // Calculate the index of input in batch x
+            int input_idx = input_dim * batch_idx + i;
+
+            float val = input[input_idx];
+            // atomic add the input values to avoid race conditions
+            atomicAdd(sum, val);
+            atomicAdd(sum_sq, val * val);
+        }
+    }
+}
+
+__global__ void batch_normalize_kernel(int input_dim, int batch_size, float mean, float std, float* input) {
+
+    int batch_idx = blockDim.x * blockIdx.x + threadIdx.x;
+
+    if (batch_idx < batch_size) {
+        for (int i = 0; i < input_dim; i++) {
+            int input_idx = input_dim * batch_idx + i;
+
+            float un_normalized = input[input_idx];
+            input[input_idx] = (un_normalized - mean) / std;
+        }
+    }
+
+}

@@ -101,4 +101,8 @@ __global__ void update_kernel(float *weights, float *biases, float *grad_w,
                               float *grad_b, int in_size, int out_size,
                               float learning_rate);
 
+__global__ void batch_stats_kernel(int input_dim, int batch_size, float* input, float* sum, float* sum_sq);
+
+__global__ void batch_normalize_kernel(int input_dim, int batch_size, float mean, float std, float* input);
+
 #endif // KERNELS_CUH_

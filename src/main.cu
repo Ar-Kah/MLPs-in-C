@@ -7,6 +7,7 @@
 #include "kernels.cuh"
 #include "mnist.h"
 
+#define INPUT_SIZE 784
 
 typedef struct {
     Layer *layers;
@@ -169,6 +170,37 @@ void init_layer(Layer *l, int in, int out, int batch_size) {
 
 }
 
+void batch_noramlization(int batch_size, float* d_input, int input_size) {
+    float* sum;
+    cudaMallocManaged((void**)&sum, sizeof(float));
+    *sum = 0.0f;
+
+    float* sum_sq;
+    cudaMallocManaged((void**)&sum_sq, sizeof(float));
+    *sum_sq = 0.0f;
+
+    int threadsPerBlock = 256;
+    int blocks = (batch_size + threadsPerBlock - 1) / threadsPerBlock;
+
+    batch_stats_kernel<<<blocks, threadsPerBlock>>>(input_size, batch_size, d_input, sum, sum_sq);
+
+    CUDA_CHECK_ERR(cudaDeviceSynchronize());
+
+    // calculate the mean for batchnorm
+    int N = input_size * batch_size;
+    float mean = *sum / N;
+    float variance = pow(*sum - (input_size * mean), 2) / input_size;
+
+    float std_dev = sqrt(variance + EPSILON);
+
+    batch_normalize_kernel<<<blocks, threadsPerBlock>>>(input_size, batch_size, mean, std_dev, d_input);
+
+    CUDA_CHECK_ERR(cudaDeviceSynchronize());
+
+    cudaFree(sum);
+    cudaFree(sum_sq);
+}
+
 Network create_network_layers(int* layer_sizes, int num_layers, int batch_size) {
 
     Layer* layers;
@@ -309,7 +341,7 @@ int main() {
     
     // allocate memory on the device (GPU) for inputs
     float *d_train_input;
-    cudaMalloc((void**)&d_train_input, sizeof(float) * 784 * batch_size);
+    cudaMalloc((void**)&d_train_input, sizeof(float) * INPUT_SIZE * batch_size);
 
     // allocate memory on the device for target valeus
     int *d_train_target;
@@ -317,7 +349,7 @@ int main() {
 
     // Allocate memory for the device for the test images
     float *d_test_input;
-    cudaMalloc((void**)&d_test_input, sizeof(float) * 784 * batch_size);
+    cudaMalloc((void**)&d_test_input, sizeof(float) * INPUT_SIZE * batch_size);
 
     // Allocate memory for the device for the test image labels
     int *d_test_target;
@@ -339,7 +371,7 @@ int main() {
 
     printf("Started training\n");
     for (int e = 0; e < epochs; e++) {
-        // CORRECTED: To zero a Managed Memory pointer, use the dereference operator
+        
         *epoch_loss = 0.0; 
 
         int step = 0;
@@ -347,7 +379,7 @@ int main() {
         // Cut the loop before pointing at garbage memory in the taraining image array.
         // The loop should stop when we still have room for one full batch
         for (int i = 0; i + batch_size <= num_train_img; i += batch_size) {
-            cudaMemcpy(d_train_input, train_image + (i * 784), sizeof(float) * 784 * batch_size, cudaMemcpyHostToDevice);
+            cudaMemcpy(d_train_input, train_image + (i * INPUT_SIZE), sizeof(float) * INPUT_SIZE * batch_size, cudaMemcpyHostToDevice);
             cudaMemcpy(d_train_target, train_image_label + i, sizeof(int) * batch_size, cudaMemcpyHostToDevice);
 
             forward(&network, d_train_input, batch_size);
@@ -387,8 +419,7 @@ int main() {
         *validation_loss = 0.0f;
         // Make the validation pass
         for (int i = 0; i + batch_size <= num_test_img; i += batch_size) {
-
-            cudaMemcpy(d_test_input, test_image + (i * 784), sizeof(float) * 784 * batch_size, cudaMemcpyHostToDevice);
+            cudaMemcpy(d_test_input, test_image + (i * INPUT_SIZE), sizeof(float) * INPUT_SIZE * batch_size, cudaMemcpyHostToDevice);
             cudaMemcpy(d_test_target, test_image_label + i, sizeof(int) * batch_size, cudaMemcpyHostToDevice);
 
             forward(&network, d_test_input, batch_size);
