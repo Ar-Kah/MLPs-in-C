@@ -45,7 +45,7 @@ void batch_normalization(int batch_size, float* d_input, int input_size, float* 
     int blocks = input_size;
     // Allocate memory for shared memeory
     // 2 arrays of the size of batch_size
-    size_t shared_mem_size = threadsPerBlock * sizeof(float);
+    size_t shared_mem_size = 2 * threadsPerBlock * sizeof(float);
 
     batch_stats_kernel<<<blocks, threadsPerBlock, shared_mem_size>>>(input_size, batch_size, d_input, sum, sum_sq);
 

@@ -355,9 +355,9 @@ __global__ void batch_stats_kernel(int input_dim, int batch_size, float* input, 
     // Which batch item is this thread handling?
     int batch_idx = threadIdx.x;  
 
-    // Shared memory for the reduction (size = threads per block)
-    extern __shared__ float s_sum[]; 
-    extern __shared__ float s_sum_sq[]; // Assume we allocated twice the shared memory dynamically
+    extern __shared__ float s_data[];
+    float* s_sum = s_data;                      // Starts at index 0
+    float* s_sum_sqs = &s_data[blockDim.x];     // Starts after the first array
 
     // Calculate global index and load data
     float val = 0.0f;
@@ -368,7 +368,7 @@ __global__ void batch_stats_kernel(int input_dim, int batch_size, float* input, 
 
     // Write to LOCAL shared memory using local thread ID
     s_sum[threadIdx.x] = val;
-    s_sum_sq[threadIdx.x] = val * val;
+    s_sum_sqs[threadIdx.x] = val * val;
     
     __syncthreads();
 
@@ -376,21 +376,24 @@ __global__ void batch_stats_kernel(int input_dim, int batch_size, float* input, 
     for (int stride = blockDim.x / 2; stride > 0; stride >>= 1) {
         if (threadIdx.x < stride) {
             s_sum[threadIdx.x] += s_sum[threadIdx.x + stride];
-            s_sum_sq[threadIdx.x] += s_sum_sq[threadIdx.x + stride];
+            s_sum_sqs[threadIdx.x] += s_sum_sqs[threadIdx.x + stride];
         }
         __syncthreads();
     }
 
-    // Thread 0 writes the final result for this specific feature
-    if (threadIdx.x == 0) {
-        sums[feature_idx] = s_sum[0];
-        sum_sqs[feature_idx] = s_sum_sq[0];
+    // Calculate the parameters for bn
+    int N = batch_size;
+    float mean = s_sum[0] / N;
+    float variance = (s_sum_sqs[0] / N) - (mean * mean);
+
+    if (variance < 0) variance = 0;
+    float std_dev = sqrtf(variance + 1e-15);
+
+    // Normalize the input
+    if (batch_idx < batch_size && feature_idx < input_dim) {
+        int global_idx = batch_idx * input_dim + feature_idx;
+        input[global_idx] = (input[global_idx] - mean) / std_dev;
     }
-
-    __syncthreads();
-
-    // Normalize the data with the sums
-    
 }
 
 __global__ void batch_normalize_kernel(int input_dim, int batch_size, float mean,
