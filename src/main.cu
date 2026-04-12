@@ -1,3 +1,4 @@
+#include <cstddef>
 #include <string.h>
 #include <stdio.h>
 #include <time.h>
@@ -37,8 +38,27 @@ float bce_derivative(float target, float prediction) {
     return (prediction - target) / (prediction * (1.0f - prediction));
 }
 
+void batch_normalization(int batch_size, float* d_input, int input_size, float* sum, float* sum_sq) {
+    // Thread count is the same as batchsize
+    // Launch the kernel with the dimensions input_size = blocks, batch_size = threads
+    int threadsPerBlock = batch_size;
+    int blocks = input_size;
+    // Allocate memory for shared memeory
+    // 2 arrays of the size of batch_size
+    size_t shared_mem_size = threadsPerBlock * sizeof(float);
+
+    batch_stats_kernel<<<blocks, threadsPerBlock, shared_mem_size>>>(input_size, batch_size, d_input, sum, sum_sq);
+
+}
+
 
 void forward(Network *network, float *initial_inputs, int batch_size) {
+
+    float* sum;
+    cudaMallocManaged((void**)&sum, batch_size * sizeof(float));
+
+    float* sum_sq;
+    cudaMallocManaged((void**)&sum_sq, batch_size * sizeof(float));
 
     dim3 threadsPerBlock(16, 16);
     
@@ -46,8 +66,14 @@ void forward(Network *network, float *initial_inputs, int batch_size) {
     // calculate the forward pass for all nodes in the network
     for (int x = 0; x < network->num_layers; x++) {
 
+        memset(sum, 0, batch_size * sizeof(float));
+        memset(sum_sq, 0, batch_size * sizeof(float));
+
         // loop over layers in network
         Layer* layer = &network->layers[x];
+
+
+        batch_normalization(batch_size, current_input, layer->input_size, sum, sum_sq);
 
         dim3 blocksPerGrid(
             (layer->output_size + threadsPerBlock.x -1) / threadsPerBlock.x,
@@ -64,7 +90,11 @@ void forward(Network *network, float *initial_inputs, int batch_size) {
 
         // Wait for the GPU to finish before moving to the next layer
         CUDA_CHECK_ERR(cudaDeviceSynchronize());
+
     }
+
+    cudaFree(sum);
+    cudaFree(sum_sq);
 }
 
 void backward(Network *network, int *target, float* initial_inputs, float *probs, int batch_size) {
@@ -170,36 +200,6 @@ void init_layer(Layer *l, int in, int out, int batch_size) {
 
 }
 
-void batch_noramlization(int batch_size, float* d_input, int input_size) {
-    float* sum;
-    cudaMallocManaged((void**)&sum, sizeof(float));
-    *sum = 0.0f;
-
-    float* sum_sq;
-    cudaMallocManaged((void**)&sum_sq, sizeof(float));
-    *sum_sq = 0.0f;
-
-    int threadsPerBlock = 256;
-    int blocks = (batch_size + threadsPerBlock - 1) / threadsPerBlock;
-
-    batch_stats_kernel<<<blocks, threadsPerBlock>>>(input_size, batch_size, d_input, sum, sum_sq);
-
-    CUDA_CHECK_ERR(cudaDeviceSynchronize());
-
-    // calculate the mean for batchnorm
-    int N = input_size * batch_size;
-    float mean = *sum / N;
-    float variance = pow(*sum - (input_size * mean), 2) / input_size;
-
-    float std_dev = sqrt(variance + EPSILON);
-
-    batch_normalize_kernel<<<blocks, threadsPerBlock>>>(input_size, batch_size, mean, std_dev, d_input);
-
-    CUDA_CHECK_ERR(cudaDeviceSynchronize());
-
-    cudaFree(sum);
-    cudaFree(sum_sq);
-}
 
 Network create_network_layers(int* layer_sizes, int num_layers, int batch_size) {
 

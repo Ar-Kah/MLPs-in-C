@@ -346,23 +346,55 @@ __global__ void update_kernel(float* weights, float* biases, float* grad_w, floa
     }
 }
 
-__global__ void batch_stats_kernel(int input_dim, int batch_size, float* input, float* sum, float* sum_sq) {
-    int batch_idx = blockDim.x * blockIdx.x + threadIdx.x;
+// We pass in arrays for sum and sum_sq of size [input_dim]
+__global__ void batch_stats_kernel(int input_dim, int batch_size, float* input, float* sums, float* sum_sqs) {
+    
+    // Which feature (neuron) is this block handling?
+    int feature_idx = blockIdx.x; 
+    
+    // Which batch item is this thread handling?
+    int batch_idx = threadIdx.x;  
 
-    if (batch_idx < batch_size) {
-        for (int i = 0; i < input_dim; i++) {
-            // Calculate the index of input in batch x
-            int input_idx = input_dim * batch_idx + i;
+    // Shared memory for the reduction (size = threads per block)
+    extern __shared__ float s_sum[]; 
+    extern __shared__ float s_sum_sq[]; // Assume we allocated twice the shared memory dynamically
 
-            float val = input[input_idx];
-            // atomic add the input values to avoid race conditions
-            atomicAdd(sum, val);
-            atomicAdd(sum_sq, val * val);
-        }
+    // Calculate global index and load data
+    float val = 0.0f;
+    if (batch_idx < batch_size && feature_idx < input_dim) {
+        int global_idx = batch_idx * input_dim + feature_idx;
+        val = input[global_idx];
     }
+
+    // Write to LOCAL shared memory using local thread ID
+    s_sum[threadIdx.x] = val;
+    s_sum_sq[threadIdx.x] = val * val;
+    
+    __syncthreads();
+
+    // Tree Reduction (Summing it all up in parallel)
+    for (int stride = blockDim.x / 2; stride > 0; stride >>= 1) {
+        if (threadIdx.x < stride) {
+            s_sum[threadIdx.x] += s_sum[threadIdx.x + stride];
+            s_sum_sq[threadIdx.x] += s_sum_sq[threadIdx.x + stride];
+        }
+        __syncthreads();
+    }
+
+    // Thread 0 writes the final result for this specific feature
+    if (threadIdx.x == 0) {
+        sums[feature_idx] = s_sum[0];
+        sum_sqs[feature_idx] = s_sum_sq[0];
+    }
+
+    __syncthreads();
+
+    // Normalize the data with the sums
+    
 }
 
-__global__ void batch_normalize_kernel(int input_dim, int batch_size, float mean, float std, float* input) {
+__global__ void batch_normalize_kernel(int input_dim, int batch_size, float mean,
+                                       float std, float* input) {
 
     int batch_idx = blockDim.x * blockIdx.x + threadIdx.x;
 
